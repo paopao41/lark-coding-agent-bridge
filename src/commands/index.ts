@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
 import { claudeCapability, codexCapability } from '../agent/capability';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
@@ -22,6 +22,10 @@ import {
   groupMsgScopeGrantedCard,
 } from '../card/config-card';
 import { GROUP_MSG_SCOPE, hasGroupMsgScope } from '../bot/app-scope';
+import { resolveCustomizeDir } from '../customize/paths';
+import { loadPersona } from '../customize/persona';
+import { loadSkills } from '../customize/skills';
+import { loadKnowledge } from '../customize/knowledge';
 import { requestScopeGrantLink } from '../bot/wizard';
 import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/managed';
 import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
@@ -1737,6 +1741,16 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
   // alive so we don't advertise a stale address.
   const sidecar = await readUiSidecar(commandProfilePaths(ctx).hostUiFile).catch(() => undefined);
   const consoleUrl = sidecar && isAlive(sidecar.pid) ? sidecar.url : undefined;
+
+  // Load persona summary for the "人格定制" panel. Disabled entirely
+  // (no `customize` field surfaced to the card) when the profile opts out
+  // via `customize.enabled = false`. Errors during read fall back to
+  // "not loaded" — the form must still render.
+  const customizeConfig = ctx.controls.profileConfig.customize;
+  const customizeFields = customizeConfig?.enabled
+    ? await buildCustomizeField(commandProfilePaths(ctx).profileDir, customizeConfig)
+    : undefined;
+
   const card = configFormCard({
     agentKind: ctx.controls.profileConfig.agentKind,
     mode: ctx.controls.profileConfig.mode,
@@ -1756,6 +1770,9 @@ async function showConfigForm(ctx: CommandContext): Promise<void> {
     admins: access.admins,
     knownChats: ctx.controls.knownChats ?? [],
     ...(consoleUrl ? { consoleUrl } : {}),
+    ...(customizeFields ? { customize: customizeFields.customize } : {}),
+    ...(customizeFields ? { skills: customizeFields.skills } : {}),
+    ...(customizeFields ? { knowledge: customizeFields.knowledge } : {}),
   });
   if (ctx.fromCardAction) await recallMessage(ctx, ctx.msg.messageId);
   await sendManagedCard(ctx.channel, ctx.msg.chatId, card, commandReplyOptions(ctx));
@@ -2050,6 +2067,60 @@ function commandProfilePaths(ctx: CommandContext) {
     rootDir: dirname(ctx.controls.configPath),
     profile: ctx.controls.profile,
   });
+}
+
+/** Loads the persona (SOUL.md) summary for the `/config` card.
+ *
+ *  Returns `{ enabled: true, soulPath, charCount, preview }`. All fields
+ *  degrade gracefully when the file is missing / empty / unreadable:
+ *  - `soulPath` is always set to the expected absolute path (so the user
+ *    knows where to create the file).
+ *  - `charCount` and `preview` become `null` when no persona is loaded.
+ */
+async function buildCustomizeField(
+  profileDir: string,
+  customizeConfig: { enabled: boolean; dir?: string },
+): Promise<{
+  customize: {
+    enabled: boolean;
+    soulPath: string;
+    charCount: number | null;
+    preview: string | null;
+  };
+  skills: Array<{ name: string; charCount: number; sourceFile: string }>;
+  knowledge: Array<{
+    name: string;
+    description?: string;
+    charCount: number;
+    sourceFile: string;
+  }>;
+}> {
+  const customizeDir = resolveCustomizeDir(profileDir, customizeConfig);
+  const soulPath = join(customizeDir, 'SOUL.md');
+  const [persona, skills, knowledge] = await Promise.all([
+    loadPersona(customizeDir).catch(() => undefined),
+    loadSkills(customizeDir).catch(() => []),
+    loadKnowledge(customizeDir).catch(() => []),
+  ]);
+  return {
+    customize: {
+      enabled: true,
+      soulPath,
+      charCount: persona?.charCount ?? null,
+      preview: persona?.preview ?? null,
+    },
+    skills: skills.map((s) => ({
+      name: s.name,
+      charCount: s.charCount,
+      sourceFile: s.sourceFile,
+    })),
+    knowledge: knowledge.map((k) => ({
+      name: k.name,
+      ...(k.description ? { description: k.description } : {}),
+      charCount: k.charCount,
+      sourceFile: k.sourceFile,
+    })),
+  };
 }
 
 async function applyConfigLarkCliIdentityPolicy(

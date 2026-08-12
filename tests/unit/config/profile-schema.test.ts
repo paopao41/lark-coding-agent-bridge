@@ -573,4 +573,64 @@ describe('profile schema', () => {
       maxAccess: 'workspace',
     });
   });
+
+  it('defaults customize to enabled:true with no dir override when the field is absent', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+    });
+
+    expect(cfg.customize).toEqual({ enabled: true });
+    expect(cfg.customize.dir).toBeUndefined();
+  });
+
+  it('respects explicit enabled:false', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      customize: { enabled: false },
+    });
+
+    expect(cfg.customize.enabled).toBe(false);
+    expect(cfg.customize.dir).toBeUndefined();
+  });
+
+  it('accepts an absolute dir override', () => {
+    const dir = process.platform === 'win32' ? 'C:\\custom\\share' : '/etc/custom/share';
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      customize: { enabled: true, dir },
+    });
+
+    expect(cfg.customize.enabled).toBe(true);
+    expect(cfg.customize.dir).toBe(dir);
+  });
+
+  it('rejects a relative dir override (would be cwd-drift prone)', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      customize: { enabled: true, dir: 'relative/path' },
+    });
+
+    // Relative paths are silently dropped — falls back to the default.
+    expect(cfg.customize.dir).toBeUndefined();
+    expect(cfg.customize.enabled).toBe(true);
+  });
+
+  it('drops non-string / empty dir values', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 2,
+      agentKind: 'claude',
+      accounts: { app },
+      customize: { enabled: true, dir: 42 as unknown as string },
+    });
+
+    expect(cfg.customize.dir).toBeUndefined();
+  });
 });

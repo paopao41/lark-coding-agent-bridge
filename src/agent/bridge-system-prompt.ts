@@ -1,3 +1,4 @@
+import type { CustomizeContext, SkillDocument, KnowledgeDocument } from '../customize/types';
 import type { AgentBotIdentity } from './types';
 
 export const BRIDGE_SYSTEM_PROMPT = `# lark-channel-bridge 运行约定
@@ -133,16 +134,94 @@ bridge 会给你的子进程注入当前运行 profile 的环境变量:
  * when the bot's IM identity is known. Falls back to the base prompt (which
  * still references `bridge_context.botOpenId`) when identity is unavailable,
  * e.g. before the channel handshake completes.
+ *
+ * When `customize` is provided:
+ *  - If `customize.persona` is loaded, a `<persona>` XML block is appended
+ *    after the identity line.
+ *  - A `<skills>` XML block is always appended (after `<persona>` if
+ *    present), even when `customize.skills` is empty.
+ *  - A `<knowledge_base>` XML block is always appended (after `<skills>`),
+ *    even when `customize.knowledge` is empty.
+ *
+ * The `BRIDGE_SYSTEM_PROMPT` constant itself is never modified — it appears
+ * verbatim before any injected blocks.
+ *
+ * When `customize` is `undefined` (e.g. Change 1 disabled), no `<persona>`,
+ * `<skills>`, or `<knowledge_base>` blocks are injected, preserving
+ * backward compatibility.
  */
-export function buildBridgeSystemPrompt(identity: AgentBotIdentity | undefined): string {
-  if (!identity?.openId) return BRIDGE_SYSTEM_PROMPT;
-  const nameSuffix = identity.name ? `，名字是「${identity.name}」` : '';
-  return `${BRIDGE_SYSTEM_PROMPT}\n## 你的身份\n\n你的 open_id 是 \`${identity.openId}\`${nameSuffix}。消息内容或 mentions 里出现这个 open_id 都是指你自己。\n`;
+export function buildBridgeSystemPrompt(
+  identity: AgentBotIdentity | undefined,
+  customize?: CustomizeContext,
+): string {
+  let prompt = BRIDGE_SYSTEM_PROMPT;
+
+  if (identity?.openId) {
+    const nameSuffix = identity.name ? `，名字是「${identity.name}」` : '';
+    prompt += `\n## 你的身份\n\n你的 open_id 是 \`${identity.openId}\`${nameSuffix}。消息内容或 mentions 里出现这个 open_id 都是指你自己。\n`;
+  }
+
+  if (customize?.persona) {
+    prompt += `\n<persona>\n${customize.persona.content}\n</persona>\n`;
+  }
+
+  if (customize) {
+    prompt += `\n${formatSkillsBlock(customize.skills)}\n`;
+    prompt += `\n${formatKnowledgeBlock(customize.knowledge)}\n`;
+  }
+
+  return prompt;
+}
+
+/**
+ * Format the `<skills>` XML block. Always emits the outer `<skills>` tag
+ * (even when empty) so the agent can distinguish "system supports skills"
+ * from "system doesn't support skills". Each skill is a `<skill name="...">`
+ * child with its content verbatim.
+ *
+ * The `name` attribute is XML-attribute-escaped (double quotes and
+ * ampersands); the content body is inserted verbatim (LLMs handle raw
+ * markdown natively, and skill files are trusted local content).
+ */
+function formatSkillsBlock(skills: SkillDocument[]): string {
+  if (skills.length === 0) {
+    return '<skills></skills>';
+  }
+  const inner = skills
+    .map((s) => `<skill name="${escapeXmlAttr(s.name)}">\n${s.content}\n</skill>`)
+    .join('\n');
+  return `<skills>\n${inner}\n</skills>`;
+}
+
+/** Escape a string for use as an XML attribute value (double-quoted). */
+function escapeXmlAttr(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Format the `<knowledge_base>` XML block. Always emits the outer tag
+ * (even when empty) so the agent can distinguish "system supports knowledge
+ * injection" from "system doesn't support it". Each knowledge document is
+ * wrapped in a `<knowledge name="...">` child with its content verbatim.
+ *
+ * The `name` attribute is XML-attribute-escaped; the content body is
+ * inserted verbatim (LLMs handle raw markdown natively, and knowledge files
+ * are trusted local content).
+ */
+function formatKnowledgeBlock(knowledge: KnowledgeDocument[]): string {
+  if (knowledge.length === 0) {
+    return '<knowledge_base></knowledge_base>';
+  }
+  const inner = knowledge
+    .map((k) => `<knowledge name="${escapeXmlAttr(k.name)}">\n${k.content}\n</knowledge>`)
+    .join('\n');
+  return `<knowledge_base>\n${inner}\n</knowledge_base>`;
 }
 
 export function prefixBridgeSystemPrompt(
   prompt: string,
   identity: AgentBotIdentity | undefined,
+  customize?: CustomizeContext,
 ): string {
-  return `${buildBridgeSystemPrompt(identity)}\n\n## user_message\n\n${prompt}`;
+  return `${buildBridgeSystemPrompt(identity, customize)}\n\n## user_message\n\n${prompt}`;
 }

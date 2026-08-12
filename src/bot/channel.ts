@@ -59,6 +59,7 @@ import { ActiveRuns, type RunHandle } from './active-runs';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, startRunFlow } from './run-flow';
+import { loadCustomizeContext } from '../customize/loader';
 import { commandSessionCatalogIdentity } from './session-catalog-identity';
 import { startKeepalive } from './keepalive';
 import { PendingQueue } from './pending-queue';
@@ -178,7 +179,7 @@ export interface StartChannelDeps {
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
   controls: Controls;
-  appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'>;
+  appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir' | 'profileDir'>;
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
@@ -319,6 +320,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           lastRunModelByScope,
           scope,
           mode,
+          profileDir: deps.appPaths?.profileDir,
         });
       } catch (err) {
         log.fail('flush', err);
@@ -802,6 +804,9 @@ interface RunBatchDeps {
   lastRunModelByScope: Map<string, string>;
   scope: string;
   mode: ChatMode;
+  /** Profile directory (from AppPaths); used to locate the customize dir.
+   *  Undefined when running without an AppPaths context (tests). */
+  profileDir?: string;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -959,6 +964,16 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     controls.profileConfig.agentKind === 'codex'
       ? codexCapability(controls.profileConfig)
       : claudeCapability(controls.profileConfig);
+  // Load customize context (persona / skills / knowledge) per-run so file
+  // edits take effect on the next run. Skipped silently when the dir is
+  // missing or customize is disabled — the common legacy case.
+  const customize =
+    controls.profileConfig.customize.enabled && deps.profileDir
+      ? await loadCustomizeContext({
+          profileDir: deps.profileDir,
+          customizeConfig: controls.profileConfig.customize,
+        })
+      : undefined;
   const flow = await startRunFlow({
     scopeId: scope,
     scope: scopeContext,
@@ -973,6 +988,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     executor,
     now: Date.now(),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
+    ...(customize ? { customize } : {}),
     observability: {
       profile: controls.profile,
       agent: capability.agentId,

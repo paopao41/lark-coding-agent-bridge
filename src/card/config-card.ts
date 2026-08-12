@@ -25,6 +25,46 @@ export interface ConfigFormOpts {
   /** URL of the running local web console (supervisor `--web-ui` mode). Shown
    * at the top of the card when present; omitted when no console is running. */
   consoleUrl?: string;
+  /** Persona (SOUL.md) customization summary for the "人格定制" panel.
+   *
+   *  - `enabled`: whether the customize feature is on for this profile.
+   *  - `soulPath`: absolute path to SOUL.md, or `null` when the file is
+   *    not yet created.
+   *  - `charCount`: SOUL.md body length (after BOM strip), or `null` when
+   *    the file is missing / empty / unreadable.
+   *  - `preview`: first 200 chars of the persona body (truncated with `…`),
+   *    or `null` when no persona is loaded.
+   *
+   *  Omit the whole field to hide the panel entirely (e.g. when customize
+   *  is disabled in the build).
+   */
+  customize?: {
+    enabled: boolean;
+    soulPath: string | null;
+    charCount: number | null;
+    preview: string | null;
+  };
+  /** Skill documents for the "技能清单" panel. Each entry shows the skill
+   *  name and its character count. When the array is empty (and customize
+   *  is enabled), the panel shows "_创建 customize/skills/*.md 以激活技能注入_".
+   *
+   *  Omit the whole field (or set to `undefined`) to hide the panel —
+   *  typically when customize is disabled.
+   */
+  skills?: Array<{ name: string; charCount: number; sourceFile: string }>;
+  /** Knowledge documents for the "知识库" panel. Each entry shows the
+   *  knowledge name, optional description, and character count. The panel
+   *  footer shows the total character count across all knowledge files.
+   *
+   *  Omit the whole field (or set to `undefined`) to hide the panel —
+   *  typically when customize is disabled.
+   */
+  knowledge?: Array<{
+    name: string;
+    description?: string;
+    charCount: number;
+    sourceFile: string;
+  }>;
 }
 
 function collapsedAccessPanel(title: string, elements: object[]): object {
@@ -47,6 +87,110 @@ function collapsedAccessPanel(title: string, elements: object[]): object {
     padding: '8px 8px 8px 8px',
     elements,
   };
+}
+
+/** Builds the "人格定制" (Persona) collapsible panel elements. Returns an
+ *  empty array when `opts.customize` is absent — callers spread the result
+ *  directly into the form elements array. */
+function customizePanel(opts: ConfigFormOpts): object[] {
+  const c = opts.customize;
+  if (!c) return [];
+
+  const statusLine = c.enabled
+    ? '_✅ 已开启 —— SOUL.md 内容会作为 `<persona>` 块注入到系统提示词末尾_'
+    : '_⛔ 已关闭 —— `customize.enabled = false`，SOUL.md 不会被加载_';
+
+  const pathLine = c.soulPath
+    ? `**SOUL.md 路径**:\n\`${c.soulPath}\``
+    : '**SOUL.md 路径**:_（未创建）_';
+
+  const countLine =
+    c.charCount !== null && c.charCount > 0
+      ? `**字符数**:\`${c.charCount}\``
+      : '**字符数**:_（未加载）_';
+
+  // Escape backticks in preview to avoid breaking the inline code block.
+  const previewText = c.preview ?? '_（无内容）_';
+  const previewLine = `**预览**:\n> ${previewText}`;
+
+  const elements: object[] = [
+    { tag: 'markdown', content: statusLine },
+    { tag: 'hr' },
+    { tag: 'markdown', content: pathLine },
+    { tag: 'markdown', content: countLine },
+    { tag: 'markdown', content: previewLine },
+    {
+      tag: 'markdown',
+      content:
+        '_💡 编辑方式：直接修改 SOUL.md 文件，下条消息立即生效（无需重启）。_\n' +
+        '_关闭定制：在 profile 配置 JSON 里设 `customize.enabled = false`。_',
+    },
+  ];
+
+  return [collapsedAccessPanel('🎭 **人格定制**（点击展开）', elements)];
+}
+
+/** Builds the "技能清单" (Skills) collapsible panel elements. Returns an
+ *  empty array when `opts.skills` is `undefined` — callers spread the
+ *  result directly into the form elements array. */
+function skillsPanel(opts: ConfigFormOpts): object[] {
+  const skills = opts.skills;
+  if (skills === undefined) return [];
+
+  const elements: object[] = [];
+  if (skills.length === 0) {
+    elements.push({
+      tag: 'markdown',
+      content: '_创建 customize/skills/*.md 以激活技能注入_',
+    });
+  } else {
+    const lines = skills.map((s) => `- \`${s.name}\`（${s.charCount} 字符）`);
+    elements.push({ tag: 'markdown', content: lines.join('\n') });
+  }
+  elements.push({
+    tag: 'markdown',
+    content:
+      '_💡 每个技能是一个 `.md` 文件，可选 YAML frontmatter（`name`/`description`/`whenToUse`）。文件名字典序决定注入顺序，建议用 `01-`/`02-` 前缀控制。_',
+  });
+
+  return [collapsedAccessPanel('🛠 **技能清单**（点击展开）', elements)];
+}
+
+/** Builds the "知识库" (Knowledge) collapsible panel elements. Returns an
+ *  empty array when `opts.knowledge` is `undefined` — callers spread the
+ *  result directly into the form elements array. */
+function knowledgePanel(opts: ConfigFormOpts): object[] {
+  const knowledge = opts.knowledge;
+  if (knowledge === undefined) return [];
+
+  const elements: object[] = [];
+  if (knowledge.length === 0) {
+    elements.push({
+      tag: 'markdown',
+      content: '_创建 customize/knowledge/*.md 以激活知识库注入_',
+    });
+  } else {
+    const lines = knowledge.map((k) => {
+      const desc = k.description ? `（${k.description}）` : '';
+      return `- \`${k.name}\`${desc}（${k.charCount} 字符）`;
+    });
+    elements.push({ tag: 'markdown', content: lines.join('\n') });
+
+    // Footer: total character count.
+    const total = knowledge.reduce((sum, k) => sum + k.charCount, 0);
+    elements.push({ tag: 'hr' });
+    elements.push({
+      tag: 'markdown',
+      content: `**总计**：\`${total}\` 字符`,
+    });
+  }
+  elements.push({
+    tag: 'markdown',
+    content:
+      '_💡 每个知识文件是一个 `.md`，可选 YAML frontmatter（`name`/`description`）。用于注入故障字典、端口映射表、操作手册等参考事实。_',
+  });
+
+  return [collapsedAccessPanel('📚 **知识库**（点击展开）', elements)];
 }
 
 function atMentionLine(openIds: string[]): string {
@@ -288,6 +432,9 @@ export function configFormCard(opts: ConfigFormOpts): object {
             },
             { tag: 'hr' },
             collapsedAccessPanel('🔒 **访问控制**（点击展开）', accessElements),
+            ...(customizePanel(opts)),
+            ...(skillsPanel(opts)),
+            ...(knowledgePanel(opts)),
             {
               tag: 'column_set',
               flex_mode: 'flow',

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentAdapter, AgentEvent, AgentRun } from '../agent/types';
 import { ActiveRuns, type RunHandle } from '../bot/active-runs';
 import { ProcessPool } from '../bot/process-pool';
+import type { CustomizeContext } from '../customize/types';
 import type { RunPolicyAllow } from '../policy/run-policy';
 import { log } from '../core/logger';
 import { RunRejected, SpawnFailed } from './errors';
@@ -24,6 +25,12 @@ export interface SubmitRunInput {
   images?: readonly string[];
   stopGraceMs?: number;
   nowait?: boolean;
+  /**
+   * Loaded customize context (persona / skills / knowledge). Forwarded to
+   * {@link AgentAdapter.run} so adapters can inject `<persona>` /
+   * `<skills>` / `<knowledge_base>` XML blocks into the system prompt.
+   */
+  customize?: CustomizeContext;
   observability?: {
     profile: string;
     agent: string;
@@ -104,6 +111,7 @@ export class RunExecutor {
       sandbox: input.policy.sandbox,
       permissionMode: input.policy.permissionMode,
       stopGraceMs: input.stopGraceMs,
+      ...(input.customize ? { customize: input.customize } : {}),
     };
     let run: AgentRun;
     try {

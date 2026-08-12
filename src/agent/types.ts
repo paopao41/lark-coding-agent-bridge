@@ -1,5 +1,6 @@
 import type { AgentAvailability } from './preflight';
 import type { ClaudePermissionMode, CodexSandboxMode } from '../config/permissions';
+import type { CustomizeContext } from '../customize/types';
 
 export type { ClaudePermissionMode } from '../config/permissions';
 
@@ -46,6 +47,13 @@ export interface AgentRunOptions {
    * are adapter-specific.
   */
   stopGraceMs?: number;
+  /**
+   * Loaded customize context (persona / skills / knowledge) for this run.
+   * When present, adapters inject `<persona>` / `<skills>` / `<knowledge_base>`
+   * XML blocks into the system prompt after `BRIDGE_SYSTEM_PROMPT`.
+   * Undefined when customize is disabled or the customize dir is absent.
+   */
+  customize?: CustomizeContext;
 }
 
 export interface AgentRun {

@@ -102,7 +102,12 @@ export class CodexAdapter implements AgentAdapter {
       ignoreRules: this.ignoreRules,
       model: opts.model,
     });
-    const envOverrides: NodeJS.ProcessEnv = buildLarkChannelEnv(this.larkChannel);
+    const envOverrides: NodeJS.ProcessEnv = buildLarkChannelEnv({
+      ...this.larkChannel,
+      ...(opts.customize?.dir
+        ? { customizeDir: opts.customize.dir }
+        : {}),
+    });
     if (this.codexHome) {
       envOverrides.CODEX_HOME = this.codexHome;
     } else if (!this.inheritCodexHome) {
@@ -153,7 +158,10 @@ export class CodexAdapter implements AgentAdapter {
     child.stdin.on('error', (err) => {
       log.warn('agent', 'stdin-error', { message: err.message });
     });
-    child.stdin.end(prefixBridgeSystemPrompt(opts.prompt, this.botIdentity), 'utf8');
+    child.stdin.end(
+      prefixBridgeSystemPrompt(opts.prompt, this.botIdentity, opts.customize),
+      'utf8',
+    );
 
     const stopGraceMs = opts.stopGraceMs ?? this.defaultStopGraceMs;
 

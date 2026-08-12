@@ -71,3 +71,325 @@ describe('prefixBridgeSystemPrompt', () => {
     expect(prompt.endsWith('hello world')).toBe(true);
   });
 });
+
+describe('buildBridgeSystemPrompt — persona injection', () => {
+  it('appends <persona> block when customize.persona is present', () => {
+    const prompt = buildBridgeSystemPrompt(
+      { openId: 'ou_bot_self', name: '助手' },
+      {
+        persona: {
+          content: '你是一名资深 SRE，专注于排障。',
+          charCount: 19,
+          preview: '你是一名资深 SRE，专注于排障。',
+          sourceFile: '/tmp/SOUL.md',
+        },
+        skills: [],
+        knowledge: [],
+        dir: '/tmp/customize',
+      },
+    );
+    // BRIDGE_SYSTEM_PROMPT verbatim, untouched.
+    expect(prompt.startsWith(BRIDGE_SYSTEM_PROMPT)).toBe(true);
+    // Identity line still present.
+    expect(prompt).toContain('ou_bot_self');
+    // Persona block appended after the identity line.
+    expect(prompt).toContain('<persona>\n你是一名资深 SRE，专注于排障。\n</persona>');
+    // Persona appears after the identity line.
+    expect(prompt.indexOf('ou_bot_self')).toBeLessThan(prompt.indexOf('<persona>'));
+  });
+
+  it('omits <persona> block when customize is undefined', () => {
+    const prompt = buildBridgeSystemPrompt({ openId: 'ou_bot_self' });
+    expect(prompt).not.toContain('<persona>');
+  });
+
+  it('omits <persona> block when customize.persona is undefined', () => {
+    const prompt = buildBridgeSystemPrompt(
+      { openId: 'ou_bot_self' },
+      { skills: [], knowledge: [], dir: '/tmp/customize' },
+    );
+    expect(prompt).not.toContain('<persona>');
+  });
+
+  it('keeps BRIDGE_SYSTEM_PROMPT content verbatim before any injected blocks', () => {
+    const prompt = buildBridgeSystemPrompt(
+      undefined,
+      {
+        persona: {
+          content: 'persona body',
+          charCount: 11,
+          preview: 'persona body',
+          sourceFile: '/tmp/SOUL.md',
+        },
+        skills: [],
+        knowledge: [],
+        dir: '/tmp/customize',
+      },
+    );
+    // The base prompt is a verbatim prefix.
+    expect(prompt.startsWith(BRIDGE_SYSTEM_PROMPT)).toBe(true);
+    // The persona block comes strictly after the base prompt.
+    expect(prompt.indexOf('<persona>')).toBeGreaterThan(BRIDGE_SYSTEM_PROMPT.length - 1);
+  });
+});
+
+describe('prefixBridgeSystemPrompt — persona injection', () => {
+  it('prefixes persona-aware system prompt before the user message', () => {
+    const prompt = prefixBridgeSystemPrompt(
+      'hello',
+      { openId: 'ou_bot_self' },
+      {
+        persona: {
+          content: 'persona body',
+          charCount: 11,
+          preview: 'persona body',
+          sourceFile: '/tmp/SOUL.md',
+        },
+        skills: [],
+        knowledge: [],
+        dir: '/tmp/customize',
+      },
+    );
+    expect(prompt).toContain('<persona>');
+    expect(prompt.indexOf('<persona>')).toBeLessThan(prompt.indexOf('## user_message'));
+    expect(prompt.endsWith('hello')).toBe(true);
+  });
+});
+
+describe('buildBridgeSystemPrompt — skills injection', () => {
+  const skillA = {
+    name: 'device-ssh',
+    content: '# SSH 免密接入\n\n步骤...',
+    charCount: 16,
+    sourceFile: '/tmp/skills/device-ssh.md',
+  };
+  const skillB = {
+    name: 'camera-doctor',
+    content: '摄像头诊断',
+    charCount: 5,
+    sourceFile: '/tmp/skills/camera-doctor.md',
+  };
+
+  it('injects <skills> block with each skill as <skill name="...">', () => {
+    const prompt = buildBridgeSystemPrompt(
+      { openId: 'ou_bot_self' },
+      { skills: [skillA, skillB], knowledge: [], dir: '/tmp/customize' },
+    );
+    expect(prompt).toContain('<skills>');
+    expect(prompt).toContain('</skills>');
+    expect(prompt).toContain('<skill name="device-ssh">');
+    expect(prompt).toContain('# SSH 免密接入\n\n步骤...');
+    expect(prompt).toContain('<skill name="camera-doctor">');
+    expect(prompt).toContain('摄像头诊断');
+    // Skills appear in array order (caller is responsible for ordering).
+    expect(prompt.indexOf('device-ssh')).toBeLessThan(prompt.indexOf('camera-doctor'));
+  });
+
+  it('injects empty <skills></skills> when skills array is empty', () => {
+    const prompt = buildBridgeSystemPrompt(
+      { openId: 'ou_bot_self' },
+      { skills: [], knowledge: [], dir: '/tmp/customize' },
+    );
+    expect(prompt).toContain('<skills></skills>');
+  });
+
+  it('places <skills> after <persona> when both are present', () => {
+    const prompt = buildBridgeSystemPrompt(
+      { openId: 'ou_bot_self' },
+      {
+        persona: {
+          content: 'persona body',
+          charCount: 11,
+          preview: 'persona body',
+          sourceFile: '/tmp/SOUL.md',
+        },
+        skills: [skillA],
+        knowledge: [],
+        dir: '/tmp/customize',
+      },
+    );
+    expect(prompt).toContain('<persona>');
+    expect(prompt).toContain('<skills>');
+    // persona must come before skills.
+    expect(prompt.indexOf('<persona>')).toBeLessThan(prompt.indexOf('<skills>'));
+  });
+
+  it('injects <skills> immediately after BRIDGE_SYSTEM_PROMPT when persona is absent', () => {
+    const prompt = buildBridgeSystemPrompt(
+      undefined,
+      { skills: [skillA], knowledge: [], dir: '/tmp/customize' },
+    );
+    expect(prompt.startsWith(BRIDGE_SYSTEM_PROMPT)).toBe(true);
+    // No <persona> block (persona is undefined).
+    expect(prompt).not.toContain('<persona>');
+    // <skills> block still present.
+    expect(prompt).toContain('<skills>');
+    // <skills> comes after the base prompt.
+    expect(prompt.indexOf('<skills>')).toBeGreaterThan(BRIDGE_SYSTEM_PROMPT.length - 1);
+  });
+
+  it('does not inject <skills> when customize is undefined (back-compat)', () => {
+    const prompt = buildBridgeSystemPrompt({ openId: 'ou_bot_self' });
+    expect(prompt).not.toContain('<skills>');
+    expect(prompt).not.toContain('<persona>');
+  });
+
+  it('escapes XML special chars in skill name attribute', () => {
+    const trickySkill = {
+      name: 'name with "quotes" & <brackets>',
+      content: 'body',
+      charCount: 4,
+      sourceFile: '/tmp/skills/tricky.md',
+    };
+    const prompt = buildBridgeSystemPrompt(
+      undefined,
+      { skills: [trickySkill], knowledge: [], dir: '/tmp/customize' },
+    );
+    // The raw name should not appear verbatim — it must be escaped.
+    expect(prompt).not.toContain('name="name with "quotes"');
+    // Escaped forms should appear.
+    expect(prompt).toContain('&quot;');
+    expect(prompt).toContain('&amp;');
+    expect(prompt).toContain('&lt;');
+    expect(prompt).toContain('&gt;');
+  });
+});
+
+describe('buildBridgeSystemPrompt — knowledge injection', () => {
+  const knowledgeA = {
+    name: 'fault-dictionary',
+    content: '# 故障字典\n\n故障 A...',
+    charCount: 12,
+    sourceFile: '/tmp/knowledge/fault-dictionary.md',
+  };
+  const knowledgeB = {
+    name: 'sn-port-mapping',
+    content: '| 端口 | 用途 |',
+    charCount: 10,
+    sourceFile: '/tmp/knowledge/sn-port-mapping.md',
+  };
+
+  it('injects <knowledge_base> block with each knowledge as <knowledge name="...">', () => {
+    const prompt = buildBridgeSystemPrompt(
+      undefined,
+      {
+        skills: [],
+        knowledge: [knowledgeA, knowledgeB],
+        dir: '/tmp/customize',
+      },
+    );
+    expect(prompt).toContain('<knowledge_base>');
+    expect(prompt).toContain('</knowledge_base>');
+    expect(prompt).toContain('<knowledge name="fault-dictionary">');
+    expect(prompt).toContain('# 故障字典');
+    expect(prompt).toContain('<knowledge name="sn-port-mapping">');
+    expect(prompt).toContain('| 端口 | 用途 |');
+  });
+
+  it('injects empty <knowledge_base></knowledge_base> when knowledge is empty', () => {
+    const prompt = buildBridgeSystemPrompt(
+      undefined,
+      { skills: [], knowledge: [], dir: '/tmp/customize' },
+    );
+    expect(prompt).toContain('<knowledge_base></knowledge_base>');
+  });
+
+  it('places <knowledge_base> after <skills> when both are present', () => {
+    const prompt = buildBridgeSystemPrompt(
+      undefined,
+      {
+        skills: [
+          { name: 's1', content: 'skill body', charCount: 9, sourceFile: '/tmp/s1.md' },
+        ],
+        knowledge: [knowledgeA],
+        dir: '/tmp/customize',
+      },
+    );
+    expect(prompt).toContain('<skills>');
+    expect(prompt).toContain('<knowledge_base>');
+    expect(prompt.indexOf('<skills>')).toBeLessThan(prompt.indexOf('<knowledge_base>'));
+  });
+
+  it('places <knowledge_base> after <persona> when skills is empty', () => {
+    const prompt = buildBridgeSystemPrompt(
+      undefined,
+      {
+        persona: {
+          content: 'persona body',
+          charCount: 11,
+          preview: 'persona body',
+          sourceFile: '/tmp/SOUL.md',
+        },
+        skills: [],
+        knowledge: [knowledgeA],
+        dir: '/tmp/customize',
+      },
+    );
+    expect(prompt).toContain('<persona>');
+    expect(prompt).toContain('<skills></skills>');
+    expect(prompt).toContain('<knowledge_base>');
+    // Order: persona < skills < knowledge_base
+    expect(prompt.indexOf('<persona>')).toBeLessThan(prompt.indexOf('<skills>'));
+    expect(prompt.indexOf('<skills>')).toBeLessThan(prompt.indexOf('<knowledge_base>'));
+  });
+
+  it('does not inject <knowledge_base> when customize is undefined', () => {
+    const prompt = buildBridgeSystemPrompt({ openId: 'ou_bot_self' });
+    expect(prompt).not.toContain('<knowledge_base>');
+  });
+
+  it('full prompt structure: BRIDGE → persona → skills → knowledge_base', () => {
+    const prompt = buildBridgeSystemPrompt(
+      { openId: 'ou_bot_self', name: '助手' },
+      {
+        persona: {
+          content: 'persona body',
+          charCount: 11,
+          preview: 'persona body',
+          sourceFile: '/tmp/SOUL.md',
+        },
+        skills: [
+          { name: 'ssh', content: 'skill body', charCount: 10, sourceFile: '/tmp/ssh.md' },
+        ],
+        knowledge: [knowledgeA],
+        dir: '/tmp/customize',
+      },
+    );
+    // BRIDGE_SYSTEM_PROMPT is verbatim prefix.
+    expect(prompt.startsWith(BRIDGE_SYSTEM_PROMPT)).toBe(true);
+    // Identity line after BRIDGE.
+    expect(prompt).toContain('ou_bot_self');
+    // Persona block.
+    expect(prompt).toContain('<persona>\npersona body\n</persona>');
+    // Skills block.
+    expect(prompt).toContain('<skill name="ssh">\nskill body\n</skill>');
+    // Knowledge block.
+    expect(prompt).toContain('<knowledge name="fault-dictionary">\n# 故障字典');
+    // Verify full order.
+    const bridgeEnd = BRIDGE_SYSTEM_PROMPT.length;
+    const personaIdx = prompt.indexOf('<persona>');
+    const skillsIdx = prompt.indexOf('<skills>');
+    const knowledgeIdx = prompt.indexOf('<knowledge_base>');
+    expect(bridgeEnd).toBeLessThan(personaIdx);
+    expect(personaIdx).toBeLessThan(skillsIdx);
+    expect(skillsIdx).toBeLessThan(knowledgeIdx);
+  });
+
+  it('escapes XML special chars in knowledge name attribute', () => {
+    const tricky = {
+      name: 'name with "quotes" & <brackets>',
+      content: 'body',
+      charCount: 4,
+      sourceFile: '/tmp/tricky.md',
+    };
+    const prompt = buildBridgeSystemPrompt(
+      undefined,
+      { skills: [], knowledge: [tricky], dir: '/tmp/customize' },
+    );
+    expect(prompt).not.toContain('name="name with "quotes"');
+    expect(prompt).toContain('&quot;');
+    expect(prompt).toContain('&amp;');
+    expect(prompt).toContain('&lt;');
+    expect(prompt).toContain('&gt;');
+  });
+});

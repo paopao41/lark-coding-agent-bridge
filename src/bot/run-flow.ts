@@ -2,6 +2,7 @@ import type { AgentCapability } from '../agent/capability';
 import { resolveModelArg } from '../agent/models';
 import type { AgentEvent } from '../agent/types';
 import type { ProfileConfig } from '../config/profile-schema';
+import type { CustomizeContext } from '../customize/types';
 import type { AccessDecision } from '../policy/access';
 import {
   evaluateRunPolicy,
@@ -35,6 +36,12 @@ export interface StartRunFlowInput {
   executor: RunExecutor;
   now: number;
   stopGraceMs?: number;
+  /**
+   * Loaded customize context (persona / skills / knowledge). Forwarded to
+   * the executor so the agent adapter can inject customization blocks into
+   * the system prompt.
+   */
+  customize?: CustomizeContext;
   observability?: {
     profile: string;
     agent: string;
@@ -129,10 +136,17 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
     }
   }
   if (!resumeFrom && input.capability.agentId === 'claude') {
-    resumeFrom = input.sessions.resumeFor(input.scopeId, workspace.cwdRealpath);
+    // When a customize directory is configured, the claude adapter runs the
+    // agent inside it (see adapter.ts effectiveCwd). Claude reports that
+    // cwd back via event.cwd, so sessions.set persists customize.dir as
+    // the session's cwd. Resume must use the same directory or the cwd
+    // comparison in SessionStore.resumeFor will never match and every run
+    // starts a fresh session — losing all conversation context.
+    const resumeCwd = input.customize?.dir ?? workspace.cwdRealpath;
+    resumeFrom = input.sessions.resumeFor(input.scopeId, resumeCwd);
     sessionId = resumeFrom;
     const stale = input.sessions.getRaw(input.scopeId);
-    if (!resumeFrom && stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
+    if (!resumeFrom && stale?.cwd && stale.cwd !== resumeCwd) {
       input.sessions.clear(input.scopeId);
     }
   }
@@ -157,6 +171,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
           : undefined,
       stopGraceMs: input.stopGraceMs,
       observability: input.observability,
+      ...(input.customize ? { customize: input.customize } : {}),
     });
   } catch (err) {
     if (err instanceof RunRejected) {

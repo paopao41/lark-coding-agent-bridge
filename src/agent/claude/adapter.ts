@@ -68,7 +68,9 @@ export class ClaudeAdapter implements AgentAdapter {
     // stream-json response. Pass the prompt via stdin and the appended system
     // prompt via a temp file (the same approach the Codex adapter uses) so no
     // special characters ever reach the shell.
-    const systemPromptFile = writeSystemPromptFile(buildBridgeSystemPrompt(this.botIdentity));
+    const systemPromptFile = writeSystemPromptFile(
+      buildBridgeSystemPrompt(this.botIdentity, opts.customize),
+    );
 
     const args = [
       '-p',
@@ -83,18 +85,35 @@ export class ClaudeAdapter implements AgentAdapter {
     if (opts.sessionId) args.push('--resume', opts.sessionId);
     if (opts.model) args.push('--model', opts.model);
 
+    // When the profile configures a customize directory, run claude inside
+    // it so the agent sees the persona/skills/knowledge files on disk (and
+    // any future CLAUDE.md placed there). Without this, claude drops into an
+    // empty workspace cwd, starts exploring with `ls`, and ignores the
+    // injected <persona> block. Fall back to the bridge workspace cwd when no
+    // customize is configured.
+    const effectiveCwd = opts.customize?.dir ?? opts.cwd;
+
     const child = spawnProcess(this.binary, args, {
-      cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),
+      cwd: effectiveCwd,
+      env: mergeProcessEnv(
+        process.env,
+        buildLarkChannelEnv({
+          ...this.larkChannel,
+          ...(opts.customize?.dir
+            ? { customizeDir: opts.customize.dir }
+            : {}),
+        }),
+      ),
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ClaudeChild;
 
     log.info('agent', 'spawn', {
       pid: child.pid ?? null,
-      cwd: opts.cwd ?? process.cwd(),
+      cwd: effectiveCwd ?? process.cwd(),
       hasSession: Boolean(opts.sessionId),
       promptChars: opts.prompt.length,
       model: opts.model,
+      usingCustomizeCwd: Boolean(opts.customize?.dir),
     });
 
     // Listeners MUST be attached synchronously here, before we return.

@@ -1,3 +1,6 @@
+import { isAbsolute } from 'node:path';
+
+import type { CustomizeConfig } from '../customize/types';
 import type {
   AppCredentials,
   AppPreferences,
@@ -165,6 +168,12 @@ export interface ProfileConfig {
   /** In-meeting agent settings. See {@link MeetingConfig}. */
   meeting: MeetingConfig;
   larkCli: LarkCliConfig;
+  /**
+   * Customize layer config (persona / skills / knowledge). Defaults to
+   * `{ enabled: true }` when absent — backward compatible because a missing
+   * `customize/` directory is a no-op (returns empty context).
+   */
+  customize: CustomizeConfig;
 }
 
 /**
@@ -243,6 +252,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     comments?: unknown;
     meeting?: unknown;
     larkCli?: unknown;
+    customize?: unknown;
   };
 
   if (raw.schemaVersion !== 2) {
@@ -270,6 +280,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const comments = normalizeComments(raw.comments);
   const meeting = normalizeMeeting(raw.meeting);
   const larkCli = normalizeLarkCli(raw.larkCli);
+  const customize = normalizeCustomize(raw.customize);
 
   return {
     schemaVersion: 2,
@@ -295,6 +306,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     comments,
     meeting,
     larkCli,
+    customize,
   };
 }
 
@@ -501,4 +513,25 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? value
     : fallback;
+}
+
+/**
+ * Normalize the `customize` field of a profile config.
+ *
+ * Defaults to `{ enabled: true }` when absent (backward compatible: a missing
+ * `customize/` directory is a no-op). When `dir` is provided it MUST be an
+ * absolute path — relative paths are rejected (logged and dropped) to avoid
+ * being resolved against an unpredictable cwd at run time.
+ */
+function normalizeCustomize(input: unknown): CustomizeConfig {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { enabled: true };
+  }
+  const raw = input as { enabled?: unknown; dir?: unknown };
+  const enabled = raw.enabled !== false;
+  const dir =
+    typeof raw.dir === 'string' && raw.dir.trim() && isAbsolute(raw.dir.trim())
+      ? raw.dir.trim()
+      : undefined;
+  return { enabled, ...(dir ? { dir } : {}) };
 }
