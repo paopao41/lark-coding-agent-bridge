@@ -1,5 +1,5 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { resolve, basename, extname, sep } from 'node:path';
+import { readdir, readFile } from 'node:fs/promises';
+import { resolve, basename, extname, join, relative, sep } from 'node:path';
 
 import { log } from '../core/logger';
 import type { KnowledgeDocument } from './types';
@@ -16,17 +16,18 @@ const UTF8_BOM = '\uFEFF';
 const FRONTMATTER_DELIM = '---';
 
 /**
- * Load all knowledge documents from `<customizeDir>/knowledge/*.md`
- * (non-recursive).
+ * Load all knowledge documents from `<customizeDir>/knowledge/` and its
+ * subdirectories (recursive; matches `.md` files at any depth).
  *
  * Behavior:
  *  - `knowledge/` directory absent → `[]` (no error, common legacy case).
  *  - `knowledge/` directory empty → `[]`.
- *  - Non-`.md` files ignored; subdirectories not recursed.
+ *  - Non-`.md` files ignored; subdirectories recursed.
  *  - Per-file read failure → warning + skip; other files still loaded.
  *  - UTF-8 BOM stripped; frontmatter (if present) parsed and stripped.
  *
- * Files are returned in filename-lexicographic order (deterministic).
+ * Files are returned in relative-path-lexicographic order (deterministic),
+ * where the relative path is POSIX-style (e.g. `camera/readme.md`).
  *
  * @param customizeDir Absolute path to the customize directory.
  * @returns Loaded knowledge documents (possibly empty, never undefined).
@@ -34,9 +35,9 @@ const FRONTMATTER_DELIM = '---';
 export async function loadKnowledge(customizeDir: string): Promise<KnowledgeDocument[]> {
   const knowledgeDir = resolve(customizeDir, 'knowledge');
 
-  let entries: string[];
+  let files: KnowledgeFileEntry[];
   try {
-    entries = await readdir(knowledgeDir);
+    files = await collectMarkdownFiles(knowledgeDir, knowledgeDir);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code !== 'ENOENT') {
@@ -48,24 +49,11 @@ export async function loadKnowledge(customizeDir: string): Promise<KnowledgeDocu
     return [];
   }
 
-  const mdFiles: string[] = [];
-  for (const entry of entries) {
-    if (extname(entry).toLowerCase() !== '.md') continue;
-    const fullPath = resolve(knowledgeDir, entry);
-    try {
-      const stats = await stat(fullPath);
-      if (!stats.isFile()) continue;
-      mdFiles.push(entry);
-    } catch {
-      log.warn('customize', 'knowledge-stat-failed', { path: fullPath });
-    }
-  }
-  mdFiles.sort();
+  files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 
   const docs: KnowledgeDocument[] = [];
-  for (const relPath of mdFiles) {
-    const fullPath = resolve(knowledgeDir, relPath);
-    const doc = await loadKnowledgeFile(fullPath, relPath);
+  for (const file of files) {
+    const doc = await loadKnowledgeFile(file.fullPath, file.relativePath);
     if (doc) docs.push(doc);
   }
 
@@ -78,6 +66,45 @@ export async function loadKnowledge(customizeDir: string): Promise<KnowledgeDocu
   }
 
   return docs;
+}
+
+interface KnowledgeFileEntry {
+  /** POSIX-style path relative to the `knowledge/` directory. */
+  relativePath: string;
+  /** Absolute path to the file on disk. */
+  fullPath: string;
+}
+
+/**
+ * Recursively collect `*.md` files under `dir`, returning entries with
+ * POSIX-style relative paths (relative to `baseDir`).
+ *
+ * Subdirectories are recursed; non-`.md` files are ignored. Directory
+ * entries named like `bad.md` are treated as directories and recursed
+ * (their contents, if any, are loaded — empty directories contribute
+ * nothing).
+ */
+async function collectMarkdownFiles(
+  dir: string,
+  baseDir: string,
+): Promise<KnowledgeFileEntry[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const acc: KnowledgeFileEntry[] = [];
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const nested = await collectMarkdownFiles(fullPath, baseDir);
+      acc.push(...nested);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (extname(entry.name).toLowerCase() !== '.md') continue;
+    acc.push({
+      relativePath: relative(baseDir, fullPath).split(sep).join('/'),
+      fullPath,
+    });
+  }
+  return acc;
 }
 
 async function loadKnowledgeFile(

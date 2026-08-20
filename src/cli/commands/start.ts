@@ -20,6 +20,7 @@ import {
 import type { AppConfig } from '../../config/schema';
 import { isComplete } from '../../config/schema';
 import { configureLogger, gcOldLogs, log, reportError } from '../../core/logger';
+import { ensureKnowledgeIndex } from '../../customize/knowledge-index';
 import { loadTelemetryAdapter, telemetry } from '../../core/telemetry';
 import { gcMediaCache } from '../../media/cache';
 import { startUiServer } from '../../ui/server';
@@ -122,6 +123,21 @@ const migrationConflictHandler = async (err: unknown): Promise<boolean> => {
   return true;
 };
 
+async function prewarmCustomizeKnowledgeIndex(appPaths: AppPaths, profileConfig: ProfileConfig): Promise<void> {
+  if (!profileConfig.customize.enabled) return;
+  await ensureKnowledgeIndex({
+    profile: appPaths.profile,
+    profileDir: appPaths.profileDir,
+    cacheDir: appPaths.profileCacheDir,
+    customizeConfig: profileConfig.customize,
+  }).catch((err) => {
+    log.warn('customize', 'knowledge-index-prewarm-failed', {
+      profile: appPaths.profile,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  });
+}
+
 /**
  * Classic single-profile foreground run (the pre-supervisor default). Uses the
  * Supervisor internally to host exactly one profile — no host lock (so multiple
@@ -134,7 +150,7 @@ async function runClassic(opts: StartOptions): Promise<void> {
     allowBootstrap: true,
     handleActiveBridgeMigrationConflict: migrationConflictHandler,
   });
-  const { cfg, configPath, appPaths } = runtime;
+  const { cfg, configPath, appPaths, profileConfig } = runtime;
   configureLogger({ logsDir: appPaths.logsDir });
   await loadTelemetryAdapter({
     version: pkg.version,
@@ -143,6 +159,7 @@ async function runClassic(opts: StartOptions): Promise<void> {
     hostname: os.hostname(),
   });
   await gcOldLogs();
+  await prewarmCustomizeKnowledgeIndex(appPaths, profileConfig);
 
   const supervisor = new Supervisor({ configPath, rootDir: appPaths.rootDir });
 
@@ -180,6 +197,7 @@ async function runSupervisorConsole(opts: StartOptions): Promise<void> {
   const cfg = runtime.cfg;
   const configPath = runtime.configPath;
   const appPaths = runtime.appPaths;
+  const profileConfig = runtime.profileConfig;
   configureLogger({ logsDir: appPaths.hostLogsDir });
 
   // One supervisor per machine. If one is already running, print its console
@@ -202,6 +220,7 @@ async function runSupervisorConsole(opts: StartOptions): Promise<void> {
     hostname: os.hostname(),
   });
   await gcOldLogs();
+  await prewarmCustomizeKnowledgeIndex(appPaths, profileConfig);
 
   const supervisor = new Supervisor({ configPath, rootDir: appPaths.rootDir });
 

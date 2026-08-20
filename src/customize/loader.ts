@@ -2,10 +2,11 @@ import { stat } from 'node:fs/promises';
 
 import { log } from '../core/logger';
 import type { CustomizeContext, CustomizeConfig } from './types';
-import { resolveCustomizeDir } from './paths';
 import { loadPersona } from './persona';
 import { loadSkills } from './skills';
 import { loadKnowledge } from './knowledge';
+import { knowledgeIndexPath, loadKnowledgeFromIndex } from './knowledge-index';
+import { resolveCustomizeDir } from './paths';
 
 /**
  * Options for {@link loadCustomizeContext}.
@@ -13,6 +14,8 @@ import { loadKnowledge } from './knowledge';
 export interface LoadCustomizeContextOptions {
   /** Absolute path to the profile directory (`<profileDir>`). */
   profileDir: string;
+  /** Optional profile cache directory (`<profileDir>/cache`). */
+  cacheDir?: string;
   /** Per-profile customize config (from `ProfileConfig.customize`). */
   customizeConfig: CustomizeConfig;
 }
@@ -22,8 +25,8 @@ export interface LoadCustomizeContextOptions {
  *
  * Reads from the resolved customize directory:
  *  - `SOUL.md` → `persona` (optional)
- *  - `skills/*.md` → `skills` (Change 2)
- *  - `knowledge/*.md` → `knowledge` (Change 3)
+ *  - `skills/*.md` → `skills`
+ *  - `knowledge/*.md` → `knowledge`
  *
  * Behavior:
  *  - When `customizeConfig.enabled === false`, returns an empty context
@@ -32,9 +35,8 @@ export interface LoadCustomizeContextOptions {
  *    (no error — the common case for legacy profiles).
  *  - Per-file failures are logged at `warn` level and skipped; the rest of
  *    the context is still returned.
- *
- * Loading is per-run: no in-process caching. Editing files on disk
- * between runs takes effect on the next run.
+ *  - Knowledge is loaded from the cached index when present, with a fallback
+ *    to the source files if the index is missing or unreadable.
  */
 export async function loadCustomizeContext(
   opts: LoadCustomizeContextOptions,
@@ -45,9 +47,7 @@ export async function loadCustomizeContext(
 
   const customizeDir = resolveCustomizeDir(opts.profileDir, opts.customizeConfig);
 
-  // Confirm the directory exists before descending into it; missing dir is
-  // the common legacy case and not worth a warning.
-  let dirExists: boolean;
+  let dirExists = false;
   try {
     const stats = await stat(customizeDir);
     dirExists = stats.isDirectory();
@@ -60,14 +60,12 @@ export async function loadCustomizeContext(
 
   log.info('customize', 'load-start', { dir: customizeDir });
 
-  // Change 1: persona
   const persona = await loadPersona(customizeDir);
-
-  // Change 2: skills.
   const skills = await loadSkills(customizeDir);
 
-  // Change 3: knowledge.
-  const knowledge = await loadKnowledge(customizeDir);
+  const indexPath = knowledgeIndexPath(opts.cacheDir ?? `${opts.profileDir}/cache`);
+  const knowledgeFromIndex = await loadKnowledgeFromIndex(indexPath);
+  const knowledge = knowledgeFromIndex ?? (await loadKnowledge(customizeDir));
 
   const ctx: CustomizeContext = {
     ...(persona ? { persona } : {}),
@@ -81,6 +79,7 @@ export async function loadCustomizeContext(
     hasPersona: Boolean(persona),
     skillsCount: skills.length,
     knowledgeCount: knowledge.length,
+    knowledgeSource: knowledgeFromIndex ? 'index' : 'source',
   });
 
   return ctx;

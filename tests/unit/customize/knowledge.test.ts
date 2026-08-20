@@ -50,15 +50,26 @@ describe('loadKnowledge — directory scanning', () => {
     expect(docs.map((d) => d.name)).toEqual(['fault-dictionary']);
   });
 
-  it('does not recurse into subdirectories', async () => {
+  it('recurses into subdirectories and loads nested .md files', async () => {
     const knowledgeDir = join(customizeDir, 'knowledge');
-    await mkdir(knowledgeDir);
-    await mkdir(join(knowledgeDir, 'archive'));
+    await mkdir(knowledgeDir, { recursive: true });
+    await mkdir(join(knowledgeDir, 'archive'), { recursive: true });
+    await mkdir(join(knowledgeDir, 'camera', '内参'), { recursive: true });
     await writeFile(join(knowledgeDir, 'archive', 'old.md'), '# Old');
+    await writeFile(join(knowledgeDir, 'camera', 'readme.md'), '# Camera');
+    await writeFile(join(knowledgeDir, 'camera', '内参', 'readme.md'), '# Inner Params');
     await writeFile(join(knowledgeDir, 'fault-dictionary.md'), '# Faults');
 
     const docs = await loadKnowledge(customizeDir);
-    expect(docs.map((d) => d.name)).toEqual(['fault-dictionary']);
+    // Relative-path-lexicographic ordering: archive/old.md, camera/内参/readme.md,
+    // camera/readme.md, fault-dictionary.md (CJK codepoints sort after ASCII).
+    expect(docs.map((d) => d.name)).toEqual(['old', 'readme', 'readme', 'fault-dictionary']);
+    expect(docs[0]?.metadata?.relativePath).toBe('archive/old.md');
+    expect(docs[0]?.metadata?.id).toBe('archive.old');
+    expect(docs[0]?.sourceFile).toBe(join(knowledgeDir, 'archive', 'old.md'));
+    expect(docs[1]?.metadata?.relativePath).toBe('camera/内参/readme.md');
+    expect(docs[1]?.metadata?.id).toBe('camera.readme');
+    expect(docs[2]?.metadata?.relativePath).toBe('camera/readme.md');
   });
 
   it('uses filename stem as default name', async () => {
