@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { resolve, basename, extname } from 'node:path';
+import { resolve, basename, extname, sep } from 'node:path';
 
 import { log } from '../core/logger';
 import type { KnowledgeDocument } from './types';
@@ -39,7 +39,6 @@ export async function loadKnowledge(customizeDir: string): Promise<KnowledgeDocu
     entries = await readdir(knowledgeDir);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
-    // ENOENT: directory doesn't exist — silent no-op (common case).
     if (code !== 'ENOENT') {
       log.warn('customize', 'knowledge-readdir-failed', {
         dir: knowledgeDir,
@@ -49,8 +48,6 @@ export async function loadKnowledge(customizeDir: string): Promise<KnowledgeDocu
     return [];
   }
 
-  // Filter: top-level .md files only (non-recursive). Filter out
-  // subdirectories by stat-checking each entry.
   const mdFiles: string[] = [];
   for (const entry of entries) {
     if (extname(entry).toLowerCase() !== '.md') continue;
@@ -60,18 +57,15 @@ export async function loadKnowledge(customizeDir: string): Promise<KnowledgeDocu
       if (!stats.isFile()) continue;
       mdFiles.push(entry);
     } catch {
-      // stat failed (race: file deleted between readdir and stat) — skip.
       log.warn('customize', 'knowledge-stat-failed', { path: fullPath });
     }
   }
-
-  // Deterministic ordering: filename lexicographic ascending.
   mdFiles.sort();
 
   const docs: KnowledgeDocument[] = [];
-  for (const filename of mdFiles) {
-    const fullPath = resolve(knowledgeDir, filename);
-    const doc = await loadKnowledgeFile(fullPath, filename);
+  for (const relPath of mdFiles) {
+    const fullPath = resolve(knowledgeDir, relPath);
+    const doc = await loadKnowledgeFile(fullPath, relPath);
     if (doc) docs.push(doc);
   }
 
@@ -86,11 +80,6 @@ export async function loadKnowledge(customizeDir: string): Promise<KnowledgeDocu
   return docs;
 }
 
-/**
- * Load a single knowledge file. Never throws: read/parse failures log a
- * warning and return `undefined` so the caller can continue with the other
- * files.
- */
 async function loadKnowledgeFile(
   fullPath: string,
   filename: string,
@@ -119,7 +108,58 @@ async function loadKnowledgeFile(
     content,
     charCount: content.length,
     sourceFile: fullPath,
+    metadata: {
+      id: documentId(filename),
+      relativePath: filename.split(sep).join('/'),
+      searchText: [name, frontmatter.description, filename, firstHeading(content)]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase(),
+    },
+    blocks: splitKnowledgeBlocks(fullPath, filename, name, content),
   };
+}
+
+function splitKnowledgeBlocks(
+  sourceFile: string,
+  relativePath: string,
+  name: string,
+  content: string,
+): KnowledgeDocument['blocks'] {
+  const documentIdValue = documentId(relativePath);
+  const normalizedPath = relativePath.split(sep).join('/');
+  const paragraphs = content
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const parts = paragraphs.length > 0 ? paragraphs : [content];
+  return parts.map((part, index) => ({
+    id: parts.length > 1 ? `${documentIdValue}.${index + 1}` : documentIdValue,
+    documentId: documentIdValue,
+    name,
+    kind: parts.length > 1 ? 'chunk' : 'document',
+    content: part,
+    charCount: part.length,
+    sourceFile,
+    relativePath: normalizedPath,
+    ordinal: index,
+  }));
+}
+
+function documentId(relativePath: string): string {
+  return relativePath
+    .replace(/\.md$/i, '')
+    .replace(/[^A-Za-z0-9]+/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+    .toLowerCase();
+}
+
+function firstHeading(content: string): string | undefined {
+  return content
+    .split('\n')
+    .find((line) => line.startsWith('# '))
+    ?.replace(/^#+\s*/, '')
+    .trim();
 }
 
 interface ParsedFrontmatter {

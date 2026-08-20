@@ -3,6 +3,7 @@ import type { AgentAdapter, AgentEvent, AgentRun } from '../agent/types';
 import { ActiveRuns, type RunHandle } from '../bot/active-runs';
 import { ProcessPool } from '../bot/process-pool';
 import type { CustomizeContext } from '../customize/types';
+import type { RequestClassification } from '../bot/request-classifier';
 import type { RunPolicyAllow } from '../policy/run-policy';
 import { log } from '../core/logger';
 import { RunRejected, SpawnFailed } from './errors';
@@ -31,11 +32,14 @@ export interface SubmitRunInput {
    * `<skills>` / `<knowledge_base>` XML blocks into the system prompt.
    */
   customize?: CustomizeContext;
+  classification?: RequestClassification;
   observability?: {
     profile: string;
     agent: string;
     source: string;
     stage: string;
+    model?: string;
+    modelRoute?: string;
   };
 }
 
@@ -144,13 +148,23 @@ export class RunExecutor {
       scope: input.scopeId,
       source: input.observability?.source ?? 'unknown',
       stage: input.observability?.stage ?? 'submit',
+      ...(input.classification
+        ? {
+            workflow: input.classification.workflow,
+            complexity: input.classification.complexity,
+            toolNeed: input.classification.toolNeed,
+          }
+        : {}),
     };
     log.info('run', 'started', {
       ...dimensions,
       queueWaitMs,
-      accessMode: input.policy.accessMode,
-      sandbox: input.policy.sandbox,
-      permissionMode: input.policy.permissionMode,
+      ...(input.observability
+        ? {
+            model: input.observability.model,
+            modelRoute: input.observability.modelRoute,
+          }
+        : {}),
     });
 
     let handle: RunHandle;

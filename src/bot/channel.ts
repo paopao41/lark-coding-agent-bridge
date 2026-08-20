@@ -19,6 +19,8 @@ import { handleCardAction } from '../card/dispatcher';
 import { CallbackAuth } from '../card/callback-auth';
 import { CallbackNonceStore } from '../card/callback-store';
 import { renderCard } from '../card/run-renderer';
+import { selectCustomizeRetrieval } from '../customize/retrieval';
+import { classifyRequest } from './request-classifier';
 import {
   finalizeIfRunning,
   initialState,
@@ -967,13 +969,40 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   // Load customize context (persona / skills / knowledge) per-run so file
   // edits take effect on the next run. Skipped silently when the dir is
   // missing or customize is disabled — the common legacy case.
-  const customize =
+  let customize =
     controls.profileConfig.customize.enabled && deps.profileDir
       ? await loadCustomizeContext({
           profileDir: deps.profileDir,
           customizeConfig: controls.profileConfig.customize,
         })
       : undefined;
+  const classification = classifyRequest({
+    prompt,
+    customize,
+  });
+  if (customize) {
+    customize = {
+      ...customize,
+      retrieved: selectCustomizeRetrieval({
+        query: prompt,
+        customize,
+        classification,
+      }),
+    };
+  }
+  log.info('prompt', 'classification', {
+    scope,
+    workflow: classification.workflow,
+    complexity: classification.complexity,
+    toolNeed: classification.toolNeed,
+    selectedSkillIds: classification.selectedSkillIds,
+    selectedKnowledgeIds: classification.selectedKnowledgeIds,
+    retrievedSkillIds: customize?.retrieved?.trace.selectedSkillIds,
+    retrievedKnowledgeIds: customize?.retrieved?.trace.selectedKnowledgeIds,
+    retrievedChars: customize?.retrieved?.trace.totalChars,
+    reason: classification.reason,
+  });
+
   const flow = await startRunFlow({
     scopeId: scope,
     scope: scopeContext,
@@ -989,6 +1018,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     now: Date.now(),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
     ...(customize ? { customize } : {}),
+    classification,
     observability: {
       profile: controls.profile,
       agent: capability.agentId,
@@ -1065,7 +1095,19 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   // effect immediately. Cheap object lookups, no allocation when on.
   const filterForPrefs = (state: RunState): RunState => {
     if (getShowToolCalls(controls.cfg)) return state;
-    return { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
+    // Drop tool blocks. Also drop intermediate narration text blocks that
+    // appear before the last tool call — only keep text emitted after the
+    // final tool_result (the actual final answer). When there are no tool
+    // calls, keep all text as before.
+    const lastToolIdx = state.blocks
+      .map((b) => b.kind)
+      .lastIndexOf('tool');
+    const blocks = state.blocks.filter((b) => b.kind !== 'tool');
+    const filteredBlocks =
+      lastToolIdx >= 0
+        ? state.blocks.slice(lastToolIdx + 1).filter((b) => b.kind === 'text')
+        : blocks;
+    return { ...state, blocks: filteredBlocks };
   };
   const cardRenderOptions = callbackAuth
     ? {
@@ -1084,7 +1126,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
 
   // For non-card modes Claude's output doesn't surface visually until either
   // a first streamed token (markdown mode) or the whole run ends (text mode).
-  // Add a "Typing" reaction to the triggering message as an instant ack, but
+  // Add a "OneSecond" reaction to the triggering message as an instant ack, but
   // never let that outbound API call block agent event draining.
   const reactionPromise =
     cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);

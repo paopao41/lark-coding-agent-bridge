@@ -2,10 +2,9 @@ import type { LarkChannel } from '@larksuite/channel';
 import { log } from '../core/logger';
 
 /**
- * Add a "Typing" reaction (敲键盘) to a message to give text-mode users an
+ * Add a "OneSecond" reaction (稍等) to a message to give text-mode users an
  * instant "I got your message and I'm responding" cue while Claude is still
- * thinking. Matches the conventional Feishu UX for "the other side is
- * replying". Card mode doesn't need this — the streaming card already
+ * thinking. Card mode doesn't need this — the streaming card already
  * shows a "正在思考…" footer the moment it's posted.
  *
  * Returns the reaction id on success, undefined on any failure. Failures
@@ -17,7 +16,7 @@ export async function addWorkingReaction(
   messageId: string,
 ): Promise<string | undefined> {
   try {
-    const id = await channel.addReaction(messageId, 'Typing');
+    const id = await channel.addReaction(messageId, 'OneSecond');
     if (id) log.info('reaction', 'added', { messageId, reactionId: id });
     return id;
   } catch (err) {

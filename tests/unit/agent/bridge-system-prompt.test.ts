@@ -375,6 +375,75 @@ describe('buildBridgeSystemPrompt — knowledge injection', () => {
     expect(skillsIdx).toBeLessThan(knowledgeIdx);
   });
 
+  it('falls back to full customize injection when retrieval is absent', () => {
+    const prompt = buildBridgeSystemPrompt(
+      undefined,
+      {
+        skills: [
+          { name: 'alpha', content: 'skill alpha', charCount: 11, sourceFile: '/tmp/a.md' },
+        ],
+        knowledge: [
+          { name: 'kb-a', content: 'knowledge alpha', charCount: 15, sourceFile: '/tmp/kb.md' },
+        ],
+        dir: '/tmp/customize',
+      },
+    );
+
+    expect(prompt).toContain('<skill name="alpha">');
+    expect(prompt).toContain('<knowledge name="kb-a">');
+  });
+
+  it('renders retrieved knowledge blocks instead of the full knowledge set', () => {
+    const prompt = buildBridgeSystemPrompt(
+      undefined,
+      {
+        skills: [
+          { name: 'alpha', content: 'skill alpha', charCount: 11, sourceFile: '/tmp/a.md' },
+          { name: 'beta', content: 'skill beta', charCount: 10, sourceFile: '/tmp/b.md' },
+        ],
+        knowledge: [
+          { name: 'kb-a', content: 'knowledge alpha', charCount: 15, sourceFile: '/tmp/kb-a.md' },
+          { name: 'kb-b', content: 'knowledge beta', charCount: 14, sourceFile: '/tmp/kb-b.md' },
+        ],
+        retrieved: {
+          skills: [
+            { name: 'alpha', content: 'skill alpha', charCount: 11, sourceFile: '/tmp/a.md' },
+          ],
+          knowledge: [
+            { name: 'kb-a', content: 'knowledge alpha', charCount: 15, sourceFile: '/tmp/kb-a.md' },
+          ],
+          blocks: [
+            {
+              id: 'kb-a#chunk-0',
+              documentId: 'kb-a',
+              name: 'kb-a',
+              kind: 'chunk',
+              content: 'knowledge alpha',
+              charCount: 15,
+              sourceFile: '/tmp/kb-a.md',
+              ordinal: 0,
+            },
+          ],
+          trace: {
+            query: 'alpha',
+            selectedSkillIds: ['alpha'],
+            selectedKnowledgeIds: ['kb-a'],
+            selectedBlockIds: ['kb-a#chunk-0'],
+            omittedKnowledgeIds: ['kb-b'],
+            totalChars: 26,
+            reason: 'selected by deterministic metadata relevance',
+          },
+        },
+        dir: '/tmp/customize',
+      },
+    );
+
+    expect(prompt).toContain('<skill name="alpha">');
+    expect(prompt).not.toContain('<skill name="beta">');
+    expect(prompt).toContain('<knowledge name="kb-a#kb-a#chunk-0">');
+    expect(prompt).not.toContain('<knowledge name="kb-b">');
+  });
+
   it('escapes XML special chars in knowledge name attribute', () => {
     const tricky = {
       name: 'name with "quotes" & <brackets>',

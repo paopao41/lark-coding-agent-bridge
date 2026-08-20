@@ -1,7 +1,8 @@
 import type { AgentCapability } from '../agent/capability';
-import { resolveModelArg } from '../agent/models';
+import { routeModelSelection } from '../agent/models';
 import type { AgentEvent } from '../agent/types';
 import type { ProfileConfig } from '../config/profile-schema';
+import { log } from '../core/logger';
 import type { CustomizeContext } from '../customize/types';
 import type { AccessDecision } from '../policy/access';
 import {
@@ -18,6 +19,7 @@ import {
 } from '../policy/workspace';
 import type { RunExecution, RunExecutor } from '../runtime/run-executor';
 import { RunRejected, type RunRejectedCode } from '../runtime/errors';
+import type { RequestClassification } from './request-classifier';
 import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
@@ -42,11 +44,14 @@ export interface StartRunFlowInput {
    * the system prompt.
    */
   customize?: CustomizeContext;
+  classification?: RequestClassification;
   observability?: {
     profile: string;
     agent: string;
     source: string;
     stage: string;
+    model?: string;
+    modelRoute?: string;
   };
 }
 
@@ -84,6 +89,10 @@ export interface RecordRunSessionEventInput {
 export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFlowResult> {
   const requestedCwd =
     input.workspaces.cwdFor(input.scopeId) ?? input.profileConfig.workspaces.default ?? '';
+  const modelRouting = routeModelSelection(
+    input.profileConfig.agentKind,
+    input.profileConfig.preferences.model,
+  );
   const workspace = await resolveWorkingDirectory(requestedCwd);
   if (!workspace.ok) {
     return {
@@ -115,6 +124,18 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       rejectReason: policy.rejectReason,
       workspace,
     };
+  }
+
+  if (input.classification) {
+    log.info('run-flow', 'classified', {
+      scopeId: input.scopeId,
+      workflow: input.classification.workflow,
+      complexity: input.classification.complexity,
+      toolNeed: input.classification.toolNeed,
+      selectedSkillIds: input.classification.selectedSkillIds,
+      selectedKnowledgeIds: input.classification.selectedKnowledgeIds,
+      reason: input.classification.reason,
+    });
   }
 
   let resumeFrom: string | undefined;
@@ -158,10 +179,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       policy,
       sessionId,
       threadId,
-      model: resolveModelArg(
-        input.profileConfig.agentKind,
-        input.profileConfig.preferences.model,
-      ),
+      model: modelRouting.model,
       images:
         input.capability.agentId === 'codex'
           ? policy.attachments
@@ -170,8 +188,16 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
               .filter((path): path is string => Boolean(path))
           : undefined,
       stopGraceMs: input.stopGraceMs,
-      observability: input.observability,
+      observability: {
+        profile: input.observability?.profile ?? 'unknown',
+        agent: input.observability?.agent ?? input.capability.agentId,
+        source: input.observability?.source ?? input.scope.source,
+        stage: input.observability?.stage ?? 'submit',
+        model: modelRouting.normalizedSelection,
+        modelRoute: modelRouting.reason,
+      },
       ...(input.customize ? { customize: input.customize } : {}),
+      ...(input.classification ? { classification: input.classification } : {}),
     });
   } catch (err) {
     if (err instanceof RunRejected) {

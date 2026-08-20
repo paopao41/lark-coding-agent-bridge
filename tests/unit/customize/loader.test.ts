@@ -48,6 +48,7 @@ describe('loadCustomizeContext', () => {
     expect(ctx.persona).toBeUndefined();
     expect(ctx.skills).toEqual([]);
     expect(ctx.knowledge).toEqual([]);
+    expect(ctx.retrieved).toBeUndefined();
     expect(ctx.dir).toBe('');
   });
 

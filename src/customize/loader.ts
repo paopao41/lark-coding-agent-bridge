@@ -63,10 +63,10 @@ export async function loadCustomizeContext(
   // Change 1: persona
   const persona = await loadPersona(customizeDir);
 
-  // Change 2: skills (scans customize/skills/*.md non-recursively).
+  // Change 2: skills.
   const skills = await loadSkills(customizeDir);
 
-  // Change 3: knowledge (scans customize/knowledge/*.md non-recursively).
+  // Change 3: knowledge.
   const knowledge = await loadKnowledge(customizeDir);
 
   const ctx: CustomizeContext = {

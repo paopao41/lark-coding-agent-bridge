@@ -1,4 +1,4 @@
-import type { CustomizeContext, SkillDocument, KnowledgeDocument } from '../customize/types';
+import type { CustomizeContext, SkillDocument, KnowledgeDocument, KnowledgeBlock } from '../customize/types';
 import type { AgentBotIdentity } from './types';
 
 export const BRIDGE_SYSTEM_PROMPT = `# lark-channel-bridge 运行约定
@@ -166,8 +166,13 @@ export function buildBridgeSystemPrompt(
   }
 
   if (customize) {
-    prompt += `\n${formatSkillsBlock(customize.skills)}\n`;
-    prompt += `\n${formatKnowledgeBlock(customize.knowledge)}\n`;
+    const retrieved = customize.retrieved;
+    prompt += `\n${formatSkillsBlock(retrieved?.skills?.length ? retrieved.skills : customize.skills)}\n`;
+    prompt += `\n${formatKnowledgeBlock(
+      retrieved?.blocks?.length
+        ? blocksToKnowledge(retrieved.blocks)
+        : customize.knowledge,
+    )}\n`;
   }
 
   return prompt;
@@ -216,6 +221,24 @@ function formatKnowledgeBlock(knowledge: KnowledgeDocument[]): string {
     .map((k) => `<knowledge name="${escapeXmlAttr(k.name)}">\n${k.content}\n</knowledge>`)
     .join('\n');
   return `<knowledge_base>\n${inner}\n</knowledge_base>`;
+}
+
+function blocksToKnowledge(blocks: KnowledgeBlock[]): KnowledgeDocument[] {
+  return blocks.map((block) => ({
+    name: block.kind === 'chunk' ? `${block.name}#${block.id}` : block.name,
+    content: block.content,
+    charCount: block.charCount,
+    sourceFile: block.sourceFile,
+    ...(block.relativePath
+      ? {
+          metadata: {
+            id: block.documentId,
+            relativePath: block.relativePath,
+            searchText: block.name,
+          },
+        }
+      : {}),
+  }));
 }
 
 export function prefixBridgeSystemPrompt(

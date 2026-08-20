@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { resolve, basename, extname } from 'node:path';
+import { resolve, basename, extname, sep } from 'node:path';
 
 import { log } from '../core/logger';
 import type { SkillDocument } from './types';
@@ -110,14 +110,24 @@ async function loadSkillFile(
 
   const { frontmatter, content } = parseFrontmatter(text);
   const name = nonEmpty(frontmatter.name) || stem;
+  const triggers = parseTerms(frontmatter.whenToUse);
 
   return {
     name,
     ...(nonEmpty(frontmatter.description) ? { description: frontmatter.description } : {}),
     ...(nonEmpty(frontmatter.whenToUse) ? { whenToUse: frontmatter.whenToUse } : {}),
+    ...(triggers.length ? { triggers } : {}),
     content,
     charCount: content.length,
     sourceFile: fullPath,
+    metadata: {
+      id: documentId(filename),
+      relativePath: filename.split(sep).join('/'),
+      searchText: [name, frontmatter.description, frontmatter.whenToUse, filename]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase(),
+    },
   };
 }
 
@@ -203,6 +213,22 @@ function parseFrontmatter(text: string): { frontmatter: ParsedFrontmatter; conte
   const content = contentLines.join('\n');
 
   return { frontmatter, content };
+}
+
+/** Returns a stable lowercase id derived from the source filename. */
+function documentId(filename: string): string {
+  return basename(filename, extname(filename))
+    .replace(/[^A-Za-z0-9]+/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+    .toLowerCase();
+}
+
+function parseTerms(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(/[，,、;；\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** Returns the string if non-empty (after trim), else undefined. */

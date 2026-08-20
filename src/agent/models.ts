@@ -21,18 +21,22 @@ export interface ModelOption {
 /**
  * Claude Code models. Pinned to concrete version ids (Claude Code's `--model`
  * accepts the full model-id string, not just the `opus`/`sonnet` aliases) so
- * the picker names an exact model. Add new ids here when a generation ships;
- * `opusplan` is kept as the one alias with no versioned equivalent (it runs
- * Opus for planning and Sonnet for execution).
+ * the picker names an exact model. Add new ids here when a generation ships.
  */
 const CLAUDE_MODELS: ModelOption[] = [
   { value: DEFAULT_MODEL, label: '跟随默认（不指定）' },
-  { value: 'claude-opus-4-8', label: 'Opus 4.8（最新）' },
-  { value: 'claude-opus-4-7', label: 'Opus 4.7' },
-  { value: 'claude-sonnet-5', label: 'Sonnet 5（最新）' },
-  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-  { value: 'claude-haiku-4-5', label: 'Haiku 4.5（最新）' },
-  { value: 'opusplan', label: 'Opus Plan（规划用 Opus，执行用 Sonnet）' },
+  { value: 'global.anthropic.claude-fable-5', label: 'Claude Fable 5' },
+  { value: 'global.anthropic.claude-opus-4-8', label: 'Claude Opus 4.8' },
+  { value: 'global.anthropic.claude-opus-4-7', label: 'Claude Opus 4.7' },
+  { value: 'global.anthropic.claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+  { value: 'global.anthropic.claude-opus-4-6-v1', label: 'Claude Opus 4.6' },
+  { value: 'global.anthropic.claude-opus-4-5-20251101-v1:0', label: 'Claude Opus 4.5' },
+  { value: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0', label: 'Claude Sonnet 4.5' },
+  { value: 'global.anthropic.claude-sonnet-5', label: 'Claude Sonnet 5' },
+  { value: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Claude Haiku 4.5' },
+  { value: 'us.anthropic.claude-sonnet-4-20250514-v1:0', label: 'Claude Sonnet 4' },
+  { value: 'us.anthropic.claude-opus-4-1-20250805-v1:0', label: 'Claude Opus 4.1' },
+  { value: 'global.anthropic.claude-opus-5', label: 'Claude Opus 5' },
 ];
 
 /** Codex CLI models. Forwarded to `codex exec --model`. */
@@ -42,6 +46,15 @@ const CODEX_MODELS: ModelOption[] = [
   { value: 'gpt-5', label: 'GPT-5' },
   { value: 'o3', label: 'o3' },
 ];
+
+export interface ModelRoutingDecision {
+  /** Concrete model passed to the adapter, or undefined to omit `--model`. */
+  model?: string;
+  /** Stored selection after validation, retained for diagnostics. */
+  normalizedSelection: string;
+  /** Why the decision was chosen, suitable for structured observability. */
+  reason: 'profile-explicit' | 'profile-default' | 'profile-invalid';
+}
 
 /** The model picker options for a profile's agent kind. */
 export function supportedModels(agentKind: AgentKind): ModelOption[] {
@@ -65,9 +78,32 @@ export function normalizeModelSelection(
   value: string | undefined,
 ): string {
   if (isDefaultModel(value)) return DEFAULT_MODEL;
-  return supportedModels(agentKind).some((m) => m.value === value)
+  return supportedModels(agentKind).some((model) => model.value === value)
     ? (value as string)
     : DEFAULT_MODEL;
+}
+
+/**
+ * Resolve a request model deterministically. A valid explicit profile setting
+ * always wins. Unset/default and invalid selections deliberately omit the flag
+ * so the locally authenticated CLI/account chooses its compatible default.
+ */
+export function routeModelSelection(
+  agentKind: AgentKind,
+  value: string | undefined,
+): ModelRoutingDecision {
+  const normalizedSelection = normalizeModelSelection(agentKind, value);
+  if (normalizedSelection !== DEFAULT_MODEL) {
+    return {
+      model: normalizedSelection,
+      normalizedSelection,
+      reason: 'profile-explicit',
+    };
+  }
+  return {
+    normalizedSelection,
+    reason: isDefaultModel(value) ? 'profile-default' : 'profile-invalid',
+  };
 }
 
 /**
@@ -78,12 +114,11 @@ export function resolveModelArg(
   agentKind: AgentKind,
   value: string | undefined,
 ): string | undefined {
-  const normalized = normalizeModelSelection(agentKind, value);
-  return normalized === DEFAULT_MODEL ? undefined : normalized;
+  return routeModelSelection(agentKind, value).model;
 }
 
 /** Picker label for a stored value, for display in the saved-config card. */
 export function modelLabel(agentKind: AgentKind, value: string | undefined): string {
   const normalized = normalizeModelSelection(agentKind, value);
-  return supportedModels(agentKind).find((m) => m.value === normalized)?.label ?? normalized;
+  return supportedModels(agentKind).find((model) => model.value === normalized)?.label ?? normalized;
 }

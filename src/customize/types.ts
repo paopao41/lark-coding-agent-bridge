@@ -29,6 +29,49 @@
  * `content` is the file body verbatim (BOM stripped, internal whitespace
  * preserved). Empty / whitespace-only files yield `undefined` persona.
  */
+export type CustomizeSourceKind = 'skill' | 'knowledge';
+
+export type KnowledgeBlockKind = 'document' | 'chunk';
+
+
+export interface CustomizeDocumentMetadata {
+  /** Stable retrieval id, derived from the relative path unless overridden. */
+  id: string;
+  /** Path relative to the customize directory, using POSIX separators. */
+  relativePath: string;
+  /** Lowercase retrieval terms from id/path/frontmatter/headings. */
+  searchText: string;
+}
+
+export interface KnowledgeBlock {
+  id: string;
+  documentId: string;
+  name: string;
+  kind: KnowledgeBlockKind;
+  content: string;
+  charCount: number;
+  sourceFile: string;
+  relativePath?: string;
+  ordinal: number;
+}
+
+export interface CustomizeRetrievalTrace {
+  query: string;
+  selectedSkillIds: string[];
+  selectedKnowledgeIds: string[];
+  selectedBlockIds: string[];
+  omittedKnowledgeIds: string[];
+  totalChars: number;
+  reason: string;
+}
+
+export interface CustomizeRetrievalResult {
+  skills: SkillDocument[];
+  knowledge: KnowledgeDocument[];
+  blocks: KnowledgeBlock[];
+  trace: CustomizeRetrievalTrace;
+}
+
 export interface PersonaContent {
   /** SOUL.md content verbatim (BOM stripped, no transformation). */
   content: string;
@@ -59,6 +102,10 @@ export interface SkillDocument {
   charCount: number;
   /** Absolute path to the source skill file. */
   sourceFile: string;
+  /** Retrieval metadata used by workflow selection. */
+  metadata?: CustomizeDocumentMetadata;
+  /** Optional trigger terms parsed from frontmatter. */
+  triggers?: string[];
 }
 
 /**
@@ -79,6 +126,10 @@ export interface KnowledgeDocument {
   charCount: number;
   /** Absolute path to the source knowledge file. */
   sourceFile: string;
+  /** Retrieval metadata used by on-demand selection. */
+  metadata?: CustomizeDocumentMetadata;
+  /** Split blocks derived from this document for bounded prompt rendering. */
+  blocks?: KnowledgeBlock[];
 }
 
 /**
@@ -94,6 +145,8 @@ export interface CustomizeContext {
   skills: SkillDocument[];
   /** Knowledge documents. Always an array (empty when no knowledge loaded). */
   knowledge: KnowledgeDocument[];
+  /** Selected per-run customize content. Absent means legacy full injection. */
+  retrieved?: CustomizeRetrievalResult;
   /** Absolute path to the customize directory. Exported to agent
    *  subprocesses as `LARK_CHANNEL_CUSTOMIZE_DIR` so agent-side tools can
    *  locate skills / knowledge / memory files at runtime. */

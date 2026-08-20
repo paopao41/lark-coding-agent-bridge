@@ -198,6 +198,36 @@ describe('loadKnowledge — file read boundaries', () => {
     expect(doc.content.startsWith('\uFEFF')).toBe(false);
   });
 
+  it('attaches retrieval metadata and bounded blocks', async () => {
+    const knowledgeDir = join(customizeDir, 'knowledge');
+    await mkdir(knowledgeDir);
+    await writeFile(
+      join(knowledgeDir, 'fault-dictionary.md'),
+      '---\nname: Fault Dictionary\ndescription: Error lookup table\n---\n\n# Errors\n\nE001 means low battery.\n\nE002 means timeout.\n',
+      'utf8',
+    );
+
+    const docs = await loadKnowledge(customizeDir);
+    const doc = docs[0]!;
+    expect(doc.metadata).toEqual({
+      id: 'fault.dictionary',
+      relativePath: 'fault-dictionary.md',
+      searchText: expect.stringContaining('fault dictionary'),
+    });
+    expect(doc.metadata?.searchText).toContain('error lookup table');
+    expect(doc.blocks?.map((block) => block.id)).toEqual([
+      'fault.dictionary.1',
+      'fault.dictionary.2',
+      'fault.dictionary.3',
+    ]);
+    expect(doc.blocks?.[0]).toMatchObject({
+      documentId: 'fault.dictionary',
+      name: 'Fault Dictionary',
+      kind: 'chunk',
+      ordinal: 0,
+    });
+  });
+
   it('preserves markdown tables verbatim', async () => {
     const knowledgeDir = join(customizeDir, 'knowledge');
     await mkdir(knowledgeDir);

@@ -229,6 +229,25 @@ describe('loadSkills — file read boundaries', () => {
     expect(doc.content.startsWith('\uFEFF')).toBe(false);
   });
 
+  it('attaches retrieval metadata and trigger terms', async () => {
+    const skillsDir = join(customizeDir, 'skills');
+    await mkdir(skillsDir);
+    await writeFile(
+      join(skillsDir, 'device-ssh.md'),
+      '---\nname: Device SSH\ndescription: Connect to devices\nwhenToUse: ssh, 连接, device\n---\n\nUse ssh.\n',
+      'utf8',
+    );
+
+    const docs = await loadSkills(customizeDir);
+    expect(docs[0]?.metadata).toEqual({
+      id: 'device.ssh',
+      relativePath: 'device-ssh.md',
+      searchText: expect.stringContaining('device ssh'),
+    });
+    expect(docs[0]?.metadata?.searchText).toContain('connect to devices');
+    expect(docs[0]?.triggers).toEqual(['ssh', '连接', 'device']);
+  });
+
   it('preserves markdown structure verbatim (headers, code blocks, lists)', async () => {
     const skillsDir = join(customizeDir, 'skills');
     await mkdir(skillsDir);

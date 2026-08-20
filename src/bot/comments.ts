@@ -179,7 +179,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
 
   // Cloud-doc comments have no streaming UI — the user just sees their
   // @-mention sit there until our reply lands. Mark the triggering reply
-  // with a "Typing" reaction up-front so they know we got it; clear it in
+  // with a "OneSecond" reaction up-front so they know we got it; clear it in
   // the finally below regardless of how the run ends.
   const reactionAdded = ctx.targetReplyId
     ? await channel.comments.addReaction(target, ctx.targetReplyId)
