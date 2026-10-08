@@ -47,15 +47,6 @@ const CODEX_MODELS: ModelOption[] = [
   { value: 'o3', label: 'o3' },
 ];
 
-export interface ModelRoutingDecision {
-  /** Concrete model passed to the adapter, or undefined to omit `--model`. */
-  model?: string;
-  /** Stored selection after validation, retained for diagnostics. */
-  normalizedSelection: string;
-  /** Why the decision was chosen, suitable for structured observability. */
-  reason: 'profile-explicit' | 'profile-default' | 'profile-invalid';
-}
-
 /** The model picker options for a profile's agent kind. */
 export function supportedModels(agentKind: AgentKind): ModelOption[] {
   return agentKind === 'codex' ? CODEX_MODELS : CLAUDE_MODELS;
@@ -84,29 +75,6 @@ export function normalizeModelSelection(
 }
 
 /**
- * Resolve a request model deterministically. A valid explicit profile setting
- * always wins. Unset/default and invalid selections deliberately omit the flag
- * so the locally authenticated CLI/account chooses its compatible default.
- */
-export function routeModelSelection(
-  agentKind: AgentKind,
-  value: string | undefined,
-): ModelRoutingDecision {
-  const normalizedSelection = normalizeModelSelection(agentKind, value);
-  if (normalizedSelection !== DEFAULT_MODEL) {
-    return {
-      model: normalizedSelection,
-      normalizedSelection,
-      reason: 'profile-explicit',
-    };
-  }
-  return {
-    normalizedSelection,
-    reason: isDefaultModel(value) ? 'profile-default' : 'profile-invalid',
-  };
-}
-
-/**
  * Resolve the concrete model string to hand the agent, or `undefined` to omit
  * the `--model` flag. Cross-agent / unknown values are treated as "default".
  */
@@ -114,7 +82,8 @@ export function resolveModelArg(
   agentKind: AgentKind,
   value: string | undefined,
 ): string | undefined {
-  return routeModelSelection(agentKind, value).model;
+  const normalized = normalizeModelSelection(agentKind, value);
+  return normalized === DEFAULT_MODEL ? undefined : normalized;
 }
 
 /** Picker label for a stored value, for display in the saved-config card. */

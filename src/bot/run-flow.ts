@@ -1,5 +1,5 @@
 import type { AgentCapability } from '../agent/capability';
-import { routeModelSelection } from '../agent/models';
+import { resolveModelArg } from '../agent/models';
 import type { AgentEvent } from '../agent/types';
 import type { ProfileConfig } from '../config/profile-schema';
 import { log } from '../core/logger';
@@ -50,8 +50,6 @@ export interface StartRunFlowInput {
     agent: string;
     source: string;
     stage: string;
-    model?: string;
-    modelRoute?: string;
   };
 }
 
@@ -89,7 +87,7 @@ export interface RecordRunSessionEventInput {
 export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFlowResult> {
   const requestedCwd =
     input.workspaces.cwdFor(input.scopeId) ?? input.profileConfig.workspaces.default ?? '';
-  const modelRouting = routeModelSelection(
+  const model = resolveModelArg(
     input.profileConfig.agentKind,
     input.profileConfig.preferences.model,
   );
@@ -179,7 +177,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       policy,
       sessionId,
       threadId,
-      model: modelRouting.model,
+      model,
       images:
         input.capability.agentId === 'codex'
           ? policy.attachments
@@ -193,8 +191,6 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
         agent: input.observability?.agent ?? input.capability.agentId,
         source: input.observability?.source ?? input.scope.source,
         stage: input.observability?.stage ?? 'submit',
-        model: modelRouting.normalizedSelection,
-        modelRoute: modelRouting.reason,
       },
       ...(input.customize ? { customize: input.customize } : {}),
       ...(input.classification ? { classification: input.classification } : {}),

@@ -100,7 +100,7 @@ describe('run flow classification forwarding', () => {
     expect(h.agent.runOptions).toEqual([]);
   });
 
-  it('routes the configured model and surfaces routing metadata', async () => {
+  it('forwards the configured model', async () => {
     const h = await createHarness({ defaultWorkspace: true });
     const flow = await startRunFlow({
       scopeId: 'scope-model',

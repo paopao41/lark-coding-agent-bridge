@@ -38,8 +38,6 @@ export interface SubmitRunInput {
     agent: string;
     source: string;
     stage: string;
-    model?: string;
-    modelRoute?: string;
   };
 }
 
@@ -159,12 +157,6 @@ export class RunExecutor {
     log.info('run', 'started', {
       ...dimensions,
       queueWaitMs,
-      ...(input.observability
-        ? {
-            model: input.observability.model,
-            modelRoute: input.observability.modelRoute,
-          }
-        : {}),
     });
 
     let handle: RunHandle;

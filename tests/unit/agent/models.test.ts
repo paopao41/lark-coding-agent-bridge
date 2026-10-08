@@ -5,7 +5,6 @@ import {
   modelLabel,
   normalizeModelSelection,
   resolveModelArg,
-  routeModelSelection,
   supportedModels,
 } from '../../../src/agent/models.js';
 
@@ -40,25 +39,6 @@ describe('agent model catalog', () => {
     expect(resolveModelArg('claude', undefined)).toBeUndefined();
     // Cross-agent value → no flag rather than a broken model.
     expect(resolveModelArg('codex', 'claude-opus-4-8')).toBeUndefined();
-  });
-
-  it('routes explicit profile selections ahead of all defaults', () => {
-    expect(routeModelSelection('claude', 'global.anthropic.claude-opus-5')).toEqual({
-      model: 'global.anthropic.claude-opus-5',
-      normalizedSelection: 'global.anthropic.claude-opus-5',
-      reason: 'profile-explicit',
-    });
-  });
-
-  it('records why default or invalid selections omit --model', () => {
-    expect(routeModelSelection('claude', undefined)).toEqual({
-      normalizedSelection: DEFAULT_MODEL,
-      reason: 'profile-default',
-    });
-    expect(routeModelSelection('claude', 'gpt-5-codex')).toEqual({
-      normalizedSelection: DEFAULT_MODEL,
-      reason: 'profile-invalid',
-    });
   });
 
   it('labels a stored value using the picker option text', () => {
