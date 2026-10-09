@@ -75,6 +75,11 @@ import type { SessionCatalog, SessionCatalogIdentity } from '../session/catalog'
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import { readUiSidecar } from '../ui/sidecar';
 import type { SessionStore } from '../session/store';
+import {
+  resolveScopeMode,
+  SCOPE_MODES,
+  ScopeModeStore,
+} from '../session/mode-store';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { evaluateRunPolicy } from '../policy/run-policy';
 import type { ProcessPool } from '../bot/process-pool';
@@ -133,6 +138,9 @@ export interface CommandContext {
    * scope semantic to the user (`topic` shows "话题独立 session"). */
   chatMode: 'p2p' | 'group' | 'topic';
   sessions: SessionStore;
+  /** Per-scope problem-domain mode store backing `/mode`. Optional in
+   *  test/direct-invocation contexts (then an ephemeral store is used). */
+  scopeModes?: ScopeModeStore;
   sessionCatalog?: SessionCatalog;
   sessionCatalogIdentity?: SessionCatalogIdentity;
   workspaces: WorkspaceStore;
@@ -182,6 +190,7 @@ const handlers: Record<string, Handler> = {
   '/config': handleConfig,
   '/stop': handleStop,
   '/timeout': handleTimeout,
+  '/mode': handleMode,
   '/ps': handlePs,
   '/exit': handleExit,
   '/doctor': handleDoctor,
@@ -343,6 +352,8 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
     });
   }
   ctx.sessions.clear(ctx.scope);
+  // Session reset clears the /mode domain pin along with the session.
+  ctx.scopeModes?.clear(ctx.scope);
   await reply(ctx, wasRunning ? '已中断当前任务并开始新会话。' : '已开始新会话。');
 }
 
@@ -404,6 +415,8 @@ async function handleCd(args: string, ctx: CommandContext): Promise<void> {
   ctx.activeRuns.interrupt(ctx.scope);
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
   ctx.sessions.clear(ctx.scope);
+  // Session reset clears the /mode domain pin along with the session.
+  ctx.scopeModes?.clear(ctx.scope);
   await reply(ctx, `✓ 已切换 cwd 到 \`${workspace.cwdRealpath}\`\n（session 已重置）`);
 }
 
@@ -956,6 +969,63 @@ function parseTimeoutTarget(input: string, currentScope: string): {
     value: input,
     targeted: false,
   };
+}
+
+/**
+ * `/mode <udas|moz|equip|off>` — pin a problem-domain preset for this scope.
+ * Usually triggered from Feishu bot menu entries. Lives with the session:
+ * `/new` / `/cd` (session resets) and bridge restarts clear it automatically;
+ * `/mode off` is just an explicit shortcut. While active, agent runs get a
+ * domain instruction and domain skills/knowledge are force-selected.
+ */
+async function handleMode(args: string, ctx: CommandContext): Promise<void> {
+  // Ephemeral fallback for direct-invocation/test contexts without a store;
+  // the production channel always injects the per-channel ScopeModeStore.
+  const scopeModes = ctx.scopeModes ?? new ScopeModeStore();
+  const token = args.trim().toLowerCase();
+  if (!token) {
+    const current = scopeModes.get(ctx.scope);
+    const options = SCOPE_MODES.map(
+      (m) => `- \`/mode ${m.id}\` ${m.label}${m.aliases.length ? `（别名：${m.aliases.join('、')}）` : ''}`,
+    ).join('\n');
+    const currentLine = current
+      ? `当前问题域：**${current.label}**\n`
+      : '当前未设置问题域。\n';
+    await reply(
+      ctx,
+      `${currentLine}\n可选：\n${options}\n- \`/mode off\` 取消问题域限定`,
+    );
+    return;
+  }
+
+  if (token === 'off' || token === 'clear' || token === 'reset') {
+    const cleared = scopeModes.clear(ctx.scope);
+    log.info('command', 'mode-off', { scope: ctx.scope, cleared });
+    await reply(
+      ctx,
+      cleared
+        ? '✅ 已取消本会话的问题域限定，后续消息按通用模式理解。'
+        : '本会话本来就没有设置问题域。',
+    );
+    return;
+  }
+
+  const mode = resolveScopeMode(token);
+  if (!mode) {
+    await reply(
+      ctx,
+      `❌ 未知问题域 \`${token}\`。可选：${SCOPE_MODES.map((m) => `\`${m.id}\``).join('、')}、\`off\`。`,
+    );
+    return;
+  }
+
+  scopeModes.set(ctx.scope, mode);
+  log.info('command', 'mode-set', { scope: ctx.scope, mode: mode.id });
+  await reply(
+    ctx,
+    `✅ 已进入**${mode.label}**模式。\n后续直接描述现象 / 发设备编号或 IP 即可，无需再说明是哪类问题。\n` +
+      '（`/new` 新会话或重启后自动解除；手动解除发 `/mode off`）',
+  );
 }
 
 async function handlePs(_args: string, ctx: CommandContext): Promise<void> {

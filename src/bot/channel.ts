@@ -56,6 +56,7 @@ import { createOwnerRefreshController } from '../policy/owner';
 import { RunExecutor } from '../runtime/run-executor';
 import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
+import { ScopeModeStore } from '../session/mode-store';
 import type { WorkspaceStore } from '../workspace/store';
 import { ActiveRuns, type RunHandle } from './active-runs';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
@@ -178,6 +179,8 @@ export interface StartChannelDeps {
   cfg: AppConfig;
   agent: AgentAdapter;
   sessions: SessionStore;
+  /** Per-scope `/mode` store. Defaults to an in-memory/ephemeral store. */
+  scopeModes?: ScopeModeStore;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
   controls: Controls;
@@ -186,6 +189,7 @@ export interface StartChannelDeps {
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
   const { cfg, agent, sessions, sessionCatalog, workspaces, controls } = deps;
+  const scopeModes = deps.scopeModes ?? new ScopeModeStore();
   const activeRuns = new ActiveRuns();
   // ChatModeCache stays per-bridge-instance — invalidated on restart along
   // with everything else. Topic-mode chats only need one chat.get() call ever.
@@ -311,6 +315,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           channel,
           executor,
           sessions,
+          scopeModes,
           sessionCatalog,
           workspaces,
           media,
@@ -343,6 +348,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           channel,
           agent,
           sessions,
+          scopeModes,
           sessionCatalog,
           workspaces,
           activeRuns,
@@ -365,6 +371,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           channel,
           evt,
           sessions,
+          scopeModes,
           sessionCatalog,
           workspaces,
           activeRuns,
@@ -619,6 +626,7 @@ interface IntakeDeps {
   channel: LarkChannel;
   agent: AgentAdapter;
   sessions: SessionStore;
+  scopeModes: ScopeModeStore;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
@@ -642,6 +650,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     channel,
     agent,
     sessions,
+    scopeModes,
     sessionCatalog,
     workspaces,
     activeRuns,
@@ -765,6 +774,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     scope,
     chatMode,
     sessions,
+    scopeModes,
     workspaces,
     agent,
     activeRuns,
@@ -795,6 +805,7 @@ interface RunBatchDeps {
   channel: LarkChannel;
   executor: RunExecutor;
   sessions: SessionStore;
+  scopeModes: ScopeModeStore;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
   media: MediaCache;
@@ -816,6 +827,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     channel,
     executor,
     sessions,
+    scopeModes,
     sessionCatalog,
     workspaces,
     media,
@@ -914,12 +926,18 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const prevModel = lastRunModelByScope.get(scope);
   const modelSwitched = prevModel !== undefined && prevModel !== modelSelection;
   lastRunModelByScope.set(scope, modelSelection);
-  const extraInstructions = modelSwitched
-    ? [
-        `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
-          '之前的对话里可能提到别的模型,请以当前模型为准;若被问到你用的是什么模型,据此回答。',
-      ]
-    : undefined;
+  // Active problem-domain mode for this scope (set via `/mode`, usually from a
+  // Feishu bot menu entry). Persists across `/new`; read fresh on every flush.
+  const scopeMode = scopeModes.get(scope);
+  const extraInstructions = [
+    ...(modelSwitched
+      ? [
+          `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
+            '之前的对话里可能提到别的模型,请以当前模型为准;若被问到你用的是什么模型,据此回答。',
+        ]
+      : []),
+    ...(scopeMode ? [scopeMode.instruction] : []),
+  ];
 
   const prompt = buildPrompt(
     batch,
@@ -927,13 +945,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     quotes,
     topicContext,
     channel.botIdentity,
-    extraInstructions,
+    extraInstructions.length > 0 ? extraInstructions : undefined,
   );
   log.info('prompt', 'built', {
     promptChars: prompt.length,
     quotes: quotes.length,
     topicContext: topicContext.length,
     ...(modelSwitched ? { modelSwitchedTo: modelSelection } : {}),
+    ...(scopeMode ? { scopeMode: scopeMode.id } : {}),
   });
 
   // For topic groups: thread the reply so it lands in the same topic as the
@@ -979,6 +998,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const classification = classifyRequest({
     prompt,
     customize,
+    ...(scopeMode ? { mode: scopeMode } : {}),
   });
   if (customize) {
     customize = {

@@ -111,6 +111,7 @@ async function loadSkillFile(
   const { frontmatter, content } = parseFrontmatter(text);
   const name = nonEmpty(frontmatter.name) || stem;
   const triggers = parseTerms(frontmatter.whenToUse);
+  const tags = frontmatter.tags ?? [];
 
   return {
     name,
@@ -123,7 +124,7 @@ async function loadSkillFile(
     metadata: {
       id: documentId(filename),
       relativePath: filename.split(sep).join('/'),
-      searchText: [name, frontmatter.description, frontmatter.whenToUse, filename]
+      searchText: [name, frontmatter.description, frontmatter.whenToUse, filename, ...tags]
         .filter(Boolean)
         .join(' ')
         .toLowerCase(),
@@ -135,6 +136,8 @@ interface ParsedFrontmatter {
   name?: string;
   description?: string;
   whenToUse?: string;
+  /** Lowercase domain tags (e.g. `["udas", "moz"]`), parsed from `tags:`. */
+  tags?: string[];
 }
 
 /**
@@ -146,6 +149,7 @@ interface ParsedFrontmatter {
  * name: device-ssh
  * description: 设备免密接入
  * whenToUse: 接到报障需要 SSH 时
+ * tags: udas, moz
  * ---
  * [content]
  * ```
@@ -186,9 +190,21 @@ function parseFrontmatter(text: string): { frontmatter: ParsedFrontmatter; conte
 
   const fmLines = lines.slice(1, closeIdx);
   const frontmatter: ParsedFrontmatter = {};
+  // Tracks the last `key:` seen so `- item` lines can attach to it
+  // (YAML list style, only collected for `tags`).
+  let lastListKey: 'tags' | undefined;
   for (const line of fmLines) {
     // Skip blank lines / comments inside frontmatter.
     if (line.trim() === '' || line.trim().startsWith('#')) continue;
+    const trimmed = line.trim();
+    if (trimmed.startsWith('- ')) {
+      // YAML list item — attach to the last list-capable key (tags only).
+      if (lastListKey === 'tags') {
+        const parsed = parseTagList(trimmed.slice(2));
+        if (parsed.length > 0) frontmatter.tags = [...(frontmatter.tags ?? []), ...parsed];
+      }
+      continue;
+    }
     const colonIdx = line.indexOf(':');
     if (colonIdx === -1) {
       // Not a `key: value` pair — treat as malformed frontmatter, degrade.
@@ -198,6 +214,11 @@ function parseFrontmatter(text: string): { frontmatter: ParsedFrontmatter; conte
     const value = line.slice(colonIdx + 1).trim();
     if (key === 'name' || key === 'description' || key === 'whenToUse') {
       frontmatter[key] = value;
+      lastListKey = undefined;
+    } else if (key === 'tags') {
+      const parsed = parseTagList(value);
+      if (parsed.length > 0) frontmatter.tags = [...(frontmatter.tags ?? []), ...parsed];
+      lastListKey = 'tags';
     }
     // Unknown keys are silently ignored (forward-compat: we don't reject
     // frontmatter that has extra fields the loader doesn't recognize).
@@ -234,4 +255,16 @@ function parseTerms(value: string | undefined): string[] {
 /** Returns the string if non-empty (after trim), else undefined. */
 function nonEmpty(s: string | undefined): string | undefined {
   return s && s.trim().length > 0 ? s.trim() : undefined;
+}
+
+/**
+ * Split a `tags` frontmatter value into lowercase tags.
+ * Accepts comma / semicolon / whitespace separated values, e.g.
+ * `tags: udas, moz` or `- udas` list items (each item re-split).
+ */
+function parseTagList(value: string): string[] {
+  return value
+    .split(/[,;，、\s]+/)
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
 }

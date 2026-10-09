@@ -11,6 +11,7 @@ import { canUseDm, canUseGroup } from '../policy/access';
 import type { RunExecutor } from '../runtime/run-executor';
 import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
+import { ScopeModeStore } from '../session/mode-store';
 import type { WorkspaceStore } from '../workspace/store';
 import { commandSessionCatalogIdentity } from '../bot/session-catalog-identity';
 import { lookupMessageThreadId } from '../bot/thread-id';
@@ -28,6 +29,8 @@ export interface CardDispatchDeps {
   channel: LarkChannel;
   evt: CardActionEvent;
   sessions: SessionStore;
+  /** Per-scope `/mode` store. Defaults to an ephemeral store (tests). */
+  scopeModes?: ScopeModeStore;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
@@ -43,6 +46,7 @@ export interface CardDispatchDeps {
 }
 
 export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
+  const scopeModes = deps.scopeModes ?? new ScopeModeStore();
   const value = deps.evt.action.value;
   if (!value || typeof value !== 'object') return;
   const payload = value as Record<string, unknown>;
@@ -96,6 +100,7 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
       scope,
       chatMode: mode,
       sessions: deps.sessions,
+      scopeModes,
       sessionCatalog: deps.sessionCatalog,
       sessionCatalogIdentity: await commandSessionCatalogIdentity({
         msg,

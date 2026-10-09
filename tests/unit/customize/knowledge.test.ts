@@ -184,6 +184,29 @@ describe('loadKnowledge — frontmatter parsing', () => {
     expect(doc.description).toBeUndefined();
     expect(doc.content).toBe('body');
   });
+
+  it('parses comma-separated tags into searchText', async () => {
+    await writeKnowledge(
+      'fault-dictionary.md',
+      '---\nname: fault-dict\ndescription: Error lookup table\ntags: udas, moz\n---\nbody',
+    );
+    const docs = await loadKnowledge(customizeDir);
+    const doc = docs[0]!;
+    expect(doc.metadata?.searchText).toContain('udas');
+    expect(doc.metadata?.searchText).toContain('moz');
+    expect(doc.content).toBe('body');
+  });
+
+  it('parses YAML list style tags', async () => {
+    await writeKnowledge(
+      'fault-dictionary.md',
+      '---\nname: fault-dict\ntags:\n- UDAS\n- moz\n---\nbody',
+    );
+    const docs = await loadKnowledge(customizeDir);
+    const doc = docs[0]!;
+    expect(doc.metadata?.searchText).toContain('udas');
+    expect(doc.metadata?.searchText).toContain('moz');
+  });
 });
 
 describe('loadKnowledge — file read boundaries', () => {

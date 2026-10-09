@@ -8,6 +8,7 @@ import type { AgentAdapter } from '../agent/types';
 import { log } from '../core/logger';
 import { refreshOwnerControls } from '../policy/owner';
 import { SessionStore } from '../session/store';
+import { ScopeModeStore } from '../session/mode-store';
 import { SessionCatalog } from '../session/catalog';
 import { WorkspaceStore } from '../workspace/store';
 import { preFlightChecks } from '../cli/preflight';
@@ -75,6 +76,7 @@ class ManagedProfile {
     private profileConfig: ProfileConfig,
     private agent: AgentAdapter,
     private sessions: SessionStore,
+    private scopeModes: ScopeModeStore,
     private sessionCatalog: SessionCatalog,
     private workspaces: WorkspaceStore,
     private startChannelFn: StartChannelFn,
@@ -115,6 +117,7 @@ class ManagedProfile {
         cfg: this.cfg,
         agent: this.agent,
         sessions: this.sessions,
+        scopeModes: this.scopeModes,
         sessionCatalog: this.sessionCatalog,
         workspaces: this.workspaces,
         controls: this.controls,
@@ -229,6 +232,7 @@ class ManagedProfile {
         cfg: next,
         agent: nextAgent,
         sessions: this.sessions,
+        scopeModes: this.scopeModes,
         sessionCatalog: this.sessionCatalog,
         workspaces: this.workspaces,
         controls: nextControls,
@@ -339,6 +343,7 @@ export class Supervisor {
 
     const sessions = new SessionStore(appPaths.sessionsFile);
     await sessions.load();
+    const scopeModes = new ScopeModeStore();
     const sessionCatalog = new SessionCatalog(`${appPaths.sessionsFile}.catalog.json`);
     await sessionCatalog.load();
     const workspaces = new WorkspaceStore(appPaths.workspacesFile);
@@ -352,6 +357,7 @@ export class Supervisor {
       profileConfig,
       agent,
       sessions,
+      scopeModes,
       sessionCatalog,
       workspaces,
       this.startChannelFn,

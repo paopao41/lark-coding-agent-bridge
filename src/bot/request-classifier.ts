@@ -1,4 +1,5 @@
 import type { CustomizeContext, KnowledgeDocument, SkillDocument } from '../customize/types';
+import type { ScopeModeDef } from '../session/mode-store';
 
 export type RequestComplexity = 'simple' | 'diagnostic' | 'open-ended';
 export type RequestWorkflow = 'none' | 'hwato-diagnostic' | 'hwato-documentation';
@@ -59,26 +60,46 @@ const TOOL_HINTS = [
 export function classifyRequest(input: {
   prompt: string;
   customize?: CustomizeContext;
+  /** Active per-scope problem-domain mode (`/mode`). When present, the
+   *  request is forced into the diagnostic workflow and customize docs
+   *  matching the mode's retrieval terms are pre-selected regardless of the
+   *  prompt content. */
+  mode?: ScopeModeDef;
 }): RequestClassification {
   const text = normalize(input.prompt);
   const hasDiagnostic = includesAny(text, DIAGNOSTIC_HINTS);
   const hasDocumentation = includesAny(text, DOCUMENTATION_HINTS);
-  const selectedSkillIds = selectSkillIds(input.customize?.skills ?? [], text);
-  const selectedKnowledgeIds = selectKnowledgeIds(input.customize?.knowledge ?? [], text);
+  const modeSkillIds = input.mode
+    ? selectSkillIds(input.customize?.skills ?? [], modeHaystack(input.mode))
+    : [];
+  const modeKnowledgeIds = input.mode
+    ? selectKnowledgeIds(input.customize?.knowledge ?? [], modeHaystack(input.mode))
+    : [];
+  const selectedSkillIds = Array.from(
+    new Set([...modeSkillIds, ...selectSkillIds(input.customize?.skills ?? [], text)]),
+  );
+  const selectedKnowledgeIds = Array.from(
+    new Set([...modeKnowledgeIds, ...selectKnowledgeIds(input.customize?.knowledge ?? [], text)]),
+  );
   const hasWorkflowSkill = selectedSkillIds.length > 0;
   const selectedIds = [...selectedSkillIds, ...selectedKnowledgeIds];
-  const hasToolNeed = includesAny(text, TOOL_HINTS) || selectedIds.length > 0;
+  const hasToolNeed =
+    includesAny(text, TOOL_HINTS) || selectedIds.length > 0 || input.mode !== undefined;
 
-  if (hasWorkflowSkill || hasDiagnostic) {
+  if (input.mode || hasWorkflowSkill || hasDiagnostic) {
     return {
       workflow: 'hwato-diagnostic',
       complexity: hasToolNeed ? 'diagnostic' : 'open-ended',
       toolNeed: hasToolNeed ? 'tool-heavy' : 'read-only',
       selectedSkillIds,
       selectedKnowledgeIds,
-      reason: hasWorkflowSkill
-        ? `matched workflow skill(s): ${selectedSkillIds.join(', ')}`
-        : 'matched diagnostic workflow hints',
+      reason: input.mode
+        ? `scope mode '${input.mode.id}' active${
+            selectedIds.length > 0 ? `; matched domain doc(s): ${selectedIds.join(', ')}` : ''
+          }`
+        : hasWorkflowSkill
+          ? `matched workflow skill(s): ${selectedSkillIds.join(', ')}`
+          : 'matched diagnostic workflow hints',
     };
   }
 
@@ -105,6 +126,11 @@ export function classifyRequest(input: {
       ? `matched reference content: ${selectedIds.join(', ')}`
       : 'no workflow hints matched',
   };
+}
+
+/** Build a normalized haystack from a mode's retrieval terms. */
+function modeHaystack(mode: ScopeModeDef): string {
+  return normalize(mode.retrievalTerms.join(' '));
 }
 
 function selectSkillIds(skills: SkillDocument[], text: string): string[] {
